@@ -1,4 +1,4 @@
-
+const { storeTelemetry } = require("../config/telemetryBuckets");
 const express = require("express");
 const { Worker } = require("node:worker_threads");
 const path = require("node:path");
@@ -18,22 +18,37 @@ router.post("/ingest", (req, res) => {
     res.status(statusCode).json(body);
   }
 
-  worker.once("message", (result) => {
-    if (result.success) {
-      sendResponse(200, {
-        success: true,
-        message: "Telemetry processed successfully",
-        telemetry: result.telemetry,
-      });
-    } else {
+  
+worker.once("message", async (result) => {
+  try {
+    if (!result.success) {
       sendResponse(400, {
         success: false,
         error: result.error,
       });
+      return;
     }
 
-    worker.terminate();
-  });
+    const bucket = await storeTelemetry(result.telemetry);
+
+    sendResponse(200, {
+      success: true,
+      message: "Telemetry processed and stored successfully",
+      telemetry: result.telemetry,
+      bucket,
+    });
+  } catch (error) {
+    console.error("Telemetry storage error:", error.message);
+
+    sendResponse(500, {
+      success: false,
+      error: "Failed to store telemetry",
+    });
+  } finally {
+    await worker.terminate();
+  }
+});
+
 
   worker.once("error", (error) => {
     console.error("Telemetry worker error:", error.message);
