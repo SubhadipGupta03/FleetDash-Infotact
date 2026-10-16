@@ -1,6 +1,19 @@
 
 const { getDatabase } = require("./database");
 
+async function ensureTelemetryIndexes() {
+  const db = getDatabase();
+  const collection = db.collection("telemetryBuckets");
+
+  await collection.createIndex(
+    { vehicleId: 1, bucketStart: 1 },
+    { unique: true, name: "vehicle_bucket_unique" }
+  );
+
+  console.log("Telemetry indexes created successfully");
+}
+
+
 async function storeTelemetry(telemetry) {
   const db = getDatabase();
   const collection = db.collection("telemetryBuckets");
@@ -48,4 +61,4 @@ async function storeTelemetry(telemetry) {
   };
 }
 
-module.exports = { storeTelemetry };
+module.exports = { storeTelemetry, ensureTelemetryIndexes };

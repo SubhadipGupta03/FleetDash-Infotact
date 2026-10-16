@@ -4,7 +4,7 @@ require("dotenv").config();
 const express = require("express");
 const telemetryRouter = require("./routes/telemetry");
 const { connectDatabase } = require("./config/database");
-
+const { ensureTelemetryIndexes } = require("./config/telemetryBuckets");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -22,7 +22,7 @@ app.use("/api/telemetry", telemetryRouter);
 async function startServer() {
   try {
     await connectDatabase();
-
+await ensureTelemetryIndexes();
     app.listen(PORT, () => {
       console.log(`FleetDash server running on port ${PORT}`);
     });
