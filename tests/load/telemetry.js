@@ -15,7 +15,7 @@ export default function () {
   const url = 'http://localhost:5000/api/telemetry/ingest';
 
   const payload = JSON.stringify({
-    vehicleId: `VH-K6-${__VU}`,
+    vehicleId: 'VH-K6-CLEAN-001',
     latitude: 28.6139,
     longitude: 77.2090,
     timestamp: new Date().toISOString(),
