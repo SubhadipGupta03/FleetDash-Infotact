@@ -2,7 +2,7 @@ const { storeTelemetry } = require("../config/telemetryBuckets");
 const express = require("express");
 const { Worker } = require("node:worker_threads");
 const path = require("node:path");
-
+const { publisher } = require("../config/redisClient");
 const router = express.Router();
 
 router.post("/ingest", (req, res) => {
@@ -30,7 +30,10 @@ worker.once("message", async (result) => {
     }
 
     const bucket = await storeTelemetry(result.telemetry);
-
+await publisher.publish(
+  "fleetdash:telemetry",
+  JSON.stringify(result.telemetry)
+);
     sendResponse(200, {
       success: true,
       message: "Telemetry processed and stored successfully",
