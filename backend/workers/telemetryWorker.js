@@ -1,5 +1,6 @@
 
 const { parentPort } = require("node:worker_threads");
+const { performance } = require("node:perf_hooks");
 
 function processTelemetry(data) {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
@@ -48,11 +49,14 @@ function processTelemetry(data) {
 
 parentPort.on("message", (data) => {
   try {
+    const workerStart = performance.now();
     const telemetry = processTelemetry(data);
+    const workerDurationMs = performance.now() - workerStart;
 
     parentPort.postMessage({
       success: true,
       telemetry,
+      workerDurationMs,
     });
   } catch (error) {
     parentPort.postMessage({

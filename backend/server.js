@@ -1,11 +1,11 @@
-
-require("dotenv").config();
+﻿require("dotenv").config();
 
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 
 const telemetryRouter = require("./routes/telemetry");
+const { closeTelemetryWorkerPool } = require("./config/telemetryWorkerPool");
 const { connectDatabase } = require("./config/database");
 const { ensureTelemetryIndexes } = require("./config/telemetryBuckets");
 const { connectRedis, publisher, subscriber } = require("./config/redisClient");
@@ -54,6 +54,7 @@ async function startServer() {
     await ensureTelemetryIndexes();
     await connectRedis();
     await subscriber.subscribe("fleetdash:telemetry", (message) => {
+
   try {
     const telemetry = JSON.parse(message);
     const binaryPayload = Buffer.from(JSON.stringify(telemetry));
@@ -75,4 +76,34 @@ console.log("Subscribed to fleetdash:telemetry");
   }
 }
 
+let isShuttingDown = false;
+
+async function shutdown() {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.log("Shutting down FleetDash...");
+
+  try {
+    await new Promise((resolve) => {
+      io.close(resolve);
+    });
+
+    await closeTelemetryWorkerPool();
+    await publisher.quit();
+    await subscriber.quit();
+
+    console.log("FleetDash shutdown complete");
+    process.exit(0);
+  } catch (error) {
+    console.error("Error during shutdown:", error.message);
+    process.exit(1);
+  }
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
 startServer();
+
+
