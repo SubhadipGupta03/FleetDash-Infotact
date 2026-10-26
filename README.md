@@ -1,11 +1,11 @@
 # FleetDash-Infotact
 
-FleetDash is a real-time fleet telemetry dashboard designed to monitor vehicle locations, process high-volume telemetry events, and support geospatial alerts.
+FleetDash is a real-time fleet telemetry dashboard designed to ingest, store, and display vehicle telemetry using an event-driven backend and a React + TypeScript frontend.
 
 ## Project Structure
 
-- `backend/` — Event-driven telemetry processing, API routes, database integration, and real-time communication.
-- `frontend/` — React and TypeScript dashboard interface.
+- `backend/` — Express API, worker-thread telemetry processing, MongoDB bucket storage, Redis Pub/Sub, and Socket.IO binary delivery.
+- `frontend/` — React and TypeScript dashboard with live telemetry updates.
 
 ## Technology Stack
 
@@ -13,35 +13,68 @@ FleetDash is a real-time fleet telemetry dashboard designed to monitor vehicle l
 - React
 - TypeScript
 - Vite
-- ESLint
+- Socket.IO Client
 
 **Backend**
 - Node.js
 - Express
-- MongoDB
-- Socket.IO
 - Worker Threads
-- Redis
+- MongoDB
+- Redis Pub/Sub
+- Socket.IO
 
-## Development Status
+## Development Progress
 
-- Week 1: Initial backend setup and static frontend dashboard.
-- Upcoming stages: Real-time telemetry integration, map rendering, geofence alerts, performance testing, and final polish.
+### Week 1
+- Express backend setup.
+- Worker-thread telemetry ingestion.
+- MongoDB bucket storage and indexes.
+- React + TypeScript dashboard layout.
+- Initial k6 load-testing scripts.
+
+### Week 2
+- Redis Pub/Sub integration.
+- Socket.IO binary telemetry delivery.
+- Frontend Socket.IO connection and telemetry hooks.
+- Live dashboard updates verified without refreshing the browser.
+
+## Verification Notes
+
+- Frontend production build: passed.
+- Binary telemetry delivery test: passed.
+- Live dashboard update test: passed.
+- A 50 RPS k6 ingestion test passed with no failed requests or dropped iterations.
+- The 2,000 requests/second target and sustained high-frequency frontend performance have not yet been verified.
 
 ## Getting Started
 
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
 ### Backend
 
-See the `backend/` directory for its environment configuration and startup instructions.
+1. Configure the environment variables using `backend/.env.example`.
+2. Install backend dependencies:
 
-## Project Goal
+   ```bash
+   cd backend
+   npm install
+   ```
 
-Build a modular, responsive, and high-throughput fleet monitoring dashboard with real-time vehicle telemetry and geospatial alert capabilities.
+3. Start the backend using the available development script in `backend/package.json`.
+
+### Frontend
+
+1. Install frontend dependencies:
+
+   ```bash
+   cd frontend
+   npm install
+   ```
+
+2. Start the development server:
+
+   ```bash
+   npm run dev
+   ```
+
+## Current Scope
+
+This documentation covers Week 1 and Week 2. Geofence alerts, custom Canvas rendering, and later deployment work remain outside the current scope.
