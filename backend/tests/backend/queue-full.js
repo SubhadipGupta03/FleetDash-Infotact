@@ -2,10 +2,18 @@ require("dotenv").config();
 process.env.NODE_ENV = "test";
 process.env.TELEMETRY_WORKERS = "1";
 process.env.TELEMETRY_WORKER_MAX_QUEUE = "1";
-
+const {
+  connectRedis,
+  publisher,
+  subscriber,
+} = require("../../config/redisClient");
 const express = require("express");
 const http = require("node:http");
 const telemetryRouter = require("../../routes/telemetry");
+const { connectDatabase, closeDatabase } = require("../../config/database");
+
+const { ensureTelemetryIndexes } = require("../../config/telemetryBuckets");
+
 const {
   closeTelemetryWorkerPool,
 } = require("../../config/telemetryWorkerPool");
@@ -55,7 +63,7 @@ function postTelemetry(port, vehicleId) {
             body: responseBody,
           });
         });
-      }
+      },
     );
 
     req.on("error", reject);
@@ -67,6 +75,10 @@ async function runTest() {
   let exitCode = 0;
 
   try {
+    await connectDatabase();
+    await ensureTelemetryIndexes();
+    await connectRedis();
+
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const port = server.address().port;
 
@@ -86,32 +98,35 @@ async function runTest() {
 
     if (
       overloaded &&
-      JSON.parse(overloaded.body).error ===
-        "Telemetry processing queue is full"
+      JSON.parse(overloaded.body).error === "Telemetry processing queue is full"
     ) {
-
       console.log("PASS: Queue overload returned the expected HTTP 503");
     } else {
       console.error("FAIL: Expected queue-full HTTP 503 was not observed");
       exitCode = 1;
     }
-const healthResponse = await fetch(
-  `http://127.0.0.1:${port}/health-test`
-);
+    const healthResponse = await fetch(`http://127.0.0.1:${port}/health-test`);
 
-if (healthResponse.status === 200) {
-  console.log("PASS: Server remains responsive after queue overload");
-} else {
-  console.error("FAIL: Server did not respond successfully after overload");
-  exitCode = 1;
-}
+    if (healthResponse.status === 200) {
+      console.log("PASS: Server remains responsive after queue overload");
+    } else {
+      console.error("FAIL: Server did not respond successfully after overload");
+      exitCode = 1;
+    }
   } catch (error) {
     console.error("Queue-full test failed:", error.message);
     exitCode = 1;
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await closeTelemetryWorkerPool();
-    console.log("Isolated test server and worker pool closed");
+
+    if (publisher.isOpen) await publisher.quit();
+    if (subscriber.isOpen) await subscriber.quit();
+
+    await closeDatabase();
+    console.log(
+      "Isolated test server, worker pool, Redis, and database closed",
+    );
   }
 
   if (exitCode !== 0) process.exitCode = exitCode;
