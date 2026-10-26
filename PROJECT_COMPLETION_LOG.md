@@ -71,3 +71,17 @@ Only mark a requirement complete when its relevant test or evidence passes. Do n
 - Regression tests after change: 7 passed, 0 failed.
 - Verified: Hourly bucket boundaries, overload handling, binary delivery, multi-client delivery, repeated ingestion, reconnect, and worker recovery.
 - Limitation: No post-change throughput benchmark has yet demonstrated 2,000 requests/second with zero omissions or query latency below 5 ms.
+
+## 8. Frontend Verification and Backend Regression Tests - 2026-10-26
+
+- Frontend file: frontend/src/App.tsx
+- Change: Vehicle activity status now uses React state and an effect-driven clock, avoiding impure clock calls during render.
+- Frontend ESLint: PASS, zero errors and zero warnings.
+- Frontend TypeScript compilation: PASS.
+- Vite production build: PASS.
+- Backend regression tests: 7 passed, 0 failed.
+- Verified: UTC hourly bucket boundaries, queue overload response, repeated ingestion, binary telemetry delivery, multi-client delivery, reconnect behavior, and worker recovery.
+- Git commit: 528842f - fix(frontend): update vehicle activity status reactively
+- GitHub push: Confirmed on subhadip-backend.
+- Limitation: Live end-to-end dashboard behavior has not yet been verified in a browser. The target of 2,000 requests/second with zero omissions and query latency below 5 ms remains unproven.
+
