@@ -1,26 +1,27 @@
-const { performance } = require("node:perf_hooks");
+﻿const { performance } = require("node:perf_hooks");
 const { storeTelemetry } = require("../config/telemetryBuckets");
 const { processTelemetry } = require("../config/telemetryWorkerPool");
 const express = require("express");
 const { publisher } = require("../config/redisClient");
 
 const router = express.Router();
+const timingEnabled = process.env.TELEMETRY_TIMING === "true";
 
 router.post("/ingest", async (req, res) => {
   let result;
 
   try {
     const workerStart = performance.now();
+    result = await processTelemetry(req.body);
 
-result = await processTelemetry(req.body);
-
-console.log(
-  `[TIMING] Worker round-trip: ${(performance.now() - workerStart).toFixed(2)} ms`
-);
-console.log(
-  `[TIMING] Worker validation: ${result.workerDurationMs?.toFixed(2) ?? "unavailable"} ms`
-);
-
+    if (timingEnabled) {
+      console.log(
+        `[TIMING] Worker round-trip: ${(performance.now() - workerStart).toFixed(2)} ms`
+      );
+      console.log(
+        `[TIMING] Worker validation: ${result.workerDurationMs?.toFixed(2) ?? "unavailable"} ms`
+      );
+    }
   } catch (error) {
     if (error.code === "WORKER_QUEUE_FULL") {
       return res.status(503).json({
@@ -46,21 +47,26 @@ console.log(
 
   try {
     const mongoStart = performance.now();
-const bucket = await storeTelemetry(result.telemetry);
-console.log(
-  `[TIMING] MongoDB storage: ${(performance.now() - mongoStart).toFixed(2)} ms`
-);
+    const bucket = await storeTelemetry(result.telemetry);
+
+    if (timingEnabled) {
+      console.log(
+        `[TIMING] MongoDB storage: ${(performance.now() - mongoStart).toFixed(2)} ms`
+      );
+    }
 
     const redisStart = performance.now();
 
-await publisher.publish(
-  "fleetdash:telemetry",
-  JSON.stringify(result.telemetry)
-);
+    await publisher.publish(
+      "fleetdash:telemetry",
+      JSON.stringify(result.telemetry)
+    );
 
-console.log(
-  `[TIMING] Redis publish: ${(performance.now() - redisStart).toFixed(2)} ms`
-);
+    if (timingEnabled) {
+      console.log(
+        `[TIMING] Redis publish: ${(performance.now() - redisStart).toFixed(2)} ms`
+      );
+    }
 
     return res.status(200).json({
       success: true,

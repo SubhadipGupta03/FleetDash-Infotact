@@ -1,5 +1,4 @@
-
-const { MongoClient } = require("mongodb");
+﻿const { MongoClient } = require("mongodb");
 
 let client;
 let db;
@@ -11,7 +10,14 @@ async function connectDatabase() {
     throw new Error("MONGODB_URI is missing from the .env file");
   }
 
-  client = new MongoClient(uri);
+  client = new MongoClient(uri, {
+    maxPoolSize: Number.parseInt(process.env.MONGODB_MAX_POOL_SIZE || "50", 10),
+    minPoolSize: Number.parseInt(process.env.MONGODB_MIN_POOL_SIZE || "5", 10),
+    maxConnecting: 5,
+    waitQueueTimeoutMS: 5000,
+    serverSelectionTimeoutMS: 10000,
+  });
+
   await client.connect();
 
   db = client.db("fleetdash");

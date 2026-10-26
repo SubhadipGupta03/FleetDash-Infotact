@@ -1,4 +1,4 @@
-const { Worker } = require("node:worker_threads");
+﻿const { Worker } = require("node:worker_threads");
 const os = require("node:os");
 const path = require("node:path");
 
@@ -31,6 +31,7 @@ const maxQueue =
 
 const slots = [];
 const queue = [];
+
 let initialized = false;
 let closing = false;
 
@@ -52,10 +53,53 @@ function dispatch() {
       job.reject(error);
     }
   }
+
+  // If a slot failed to accept a message, continue assigning
+  // remaining queued jobs to other available workers.
+  if (!closing && queue.length > 0) {
+    const hasAvailableWorker = slots.some(
+      (slot) => slot.worker && !slot.current
+    );
+
+    if (hasAvailableWorker) {
+      queueMicrotask(dispatch);
+    }
+  }
+}
+
+function rejectCurrentJob(slot, error) {
+  const job = slot.current;
+  slot.current = null;
+
+  if (job) {
+    job.reject(error);
+  }
+}
+
+function scheduleRestart(slot) {
+  if (closing || slot.restartScheduled) return;
+
+  slot.restartScheduled = true;
+
+  setTimeout(() => {
+    slot.restartScheduled = false;
+
+    if (closing || slot.worker) return;
+
+    try {
+      spawnWorker(slot);
+    } catch (error) {
+      console.error(
+        "Failed to restart telemetry worker:",
+        error.message
+      );
+      scheduleRestart(slot);
+    }
+  }, 100);
 }
 
 function spawnWorker(slot) {
-  if (closing) return;
+  if (closing || slot.worker) return;
 
   const worker = new Worker(workerPath);
   slot.worker = worker;
@@ -66,18 +110,17 @@ function spawnWorker(slot) {
     const job = slot.current;
     if (!job) return;
 
-        slot.current = null;
+    slot.current = null;
     job.resolve(result);
+
     dispatch();
   });
 
   worker.on("error", (error) => {
     if (slot.worker !== worker) return;
 
-    const job = slot.current;
-    slot.current = null;
-
-    if (job) job.reject(error);
+    rejectCurrentJob(slot, error);
+    console.error("Telemetry worker error:", error.message);
   });
 
   worker.on("exit", (code) => {
@@ -85,26 +128,15 @@ function spawnWorker(slot) {
 
     slot.worker = null;
 
-    const job = slot.current;
-    slot.current = null;
-
-    if (job) {
-      job.reject(
+    if (slot.current) {
+      rejectCurrentJob(
+        slot,
         new Error(`Telemetry worker exited unexpectedly (${code})`)
       );
     }
 
     if (!closing) {
-      setTimeout(() => {
-        if (!closing && !slot.worker) {
-          try {
-            spawnWorker(slot);
-            dispatch();
-          } catch (error) {
-            console.error("Failed to restart telemetry worker:", error.message);
-          }
-        }
-      }, 100);
+      scheduleRestart(slot);
     }
   });
 
@@ -112,13 +144,28 @@ function spawnWorker(slot) {
 }
 
 function initializeTelemetryWorkerPool() {
-  if (initialized) return;
+  if (initialized || closing) return;
+
   initialized = true;
 
   for (let i = 0; i < poolSize; i++) {
-    const slot = { worker: null, current: null };
+    const slot = {
+      worker: null,
+      current: null,
+      restartScheduled: false,
+    };
+
     slots.push(slot);
-    spawnWorker(slot);
+
+    try {
+      spawnWorker(slot);
+    } catch (error) {
+      console.error(
+        "Failed to start telemetry worker:",
+        error.message
+      );
+      scheduleRestart(slot);
+    }
   }
 
   console.log(
@@ -148,9 +195,13 @@ function processTelemetry(data) {
 }
 
 async function closeTelemetryWorkerPool() {
+  if (closing) return;
+
   closing = true;
 
-  const shutdownError = new Error("Telemetry worker pool is shutting down");
+  const shutdownError = new Error(
+    "Telemetry worker pool is shutting down"
+  );
 
   while (queue.length) {
     queue.shift().reject(shutdownError);
@@ -159,8 +210,7 @@ async function closeTelemetryWorkerPool() {
   await Promise.all(
     slots.map(async (slot) => {
       if (slot.current) {
-        slot.current.reject(shutdownError);
-        slot.current = null;
+        rejectCurrentJob(slot, shutdownError);
       }
 
       if (slot.worker) {
@@ -172,23 +222,25 @@ async function closeTelemetryWorkerPool() {
   );
 }
 
-
- async function simulateWorkerFailureForTest() {
+async function simulateWorkerFailureForTest() {
   if (process.env.NODE_ENV !== "test") {
-    throw new Error("Worker failure simulation is only allowed in test mode");
+    throw new Error(
+      "Worker failure simulation is only allowed in test mode"
+    );
   }
 
-  const slot = slots.find((item) => item.worker && !item.current);
+  const slot = slots.find(
+    (item) => item.worker && !item.current
+  );
 
   if (!slot) {
     throw new Error("No idle worker available for failure simulation");
   }
 
-  const worker = slot.worker;
-
-  await worker.terminate();
+  await slot.worker.terminate();
 }
- module.exports = {
+
+module.exports = {
   initializeTelemetryWorkerPool,
   processTelemetry,
   closeTelemetryWorkerPool,
