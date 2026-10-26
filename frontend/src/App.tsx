@@ -1,6 +1,6 @@
 
 import './App.css'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTelemetry } from './hooks/useTelemetry'
 import type { TelemetryPoint } from './services/socket'
 
@@ -21,6 +21,14 @@ function getTimestamp(point: TelemetryPoint): number {
 }
 
 function App() {
+  const [now, setNow] = useState(0)
+
+useEffect(() => {
+  const updateNow = () => setNow(Date.now())
+  updateNow()
+  const interval = setInterval(updateNow, 1000)
+  return () => clearInterval(interval)
+}, [])
   const { connected, connectionStatus, telemetry, error } = useTelemetry()
 
   const latestVehicles = useMemo(() => {
@@ -46,7 +54,7 @@ function App() {
 
   const activeVehicles = latestVehicles.filter((vehicle) => {
     const timestamp = getTimestamp(vehicle)
-    const age = Date.now() - timestamp
+    const age = now - timestamp
 
     return timestamp > 0 && age >= 0 && age <= ACTIVE_WINDOW_MS
   })
@@ -230,8 +238,8 @@ function App() {
                   </div>
                   <span className="panel-tag">
                     {getTimestamp(vehicle) > 0 &&
-                    Date.now() - getTimestamp(vehicle) >= 0 &&
-                    Date.now() - getTimestamp(vehicle) <= ACTIVE_WINDOW_MS
+                    now - getTimestamp(vehicle) >= 0 &&
+                    now - getTimestamp(vehicle) <= ACTIVE_WINDOW_MS
                       ? 'Active'
                       : 'Stale'}
                   </span>
