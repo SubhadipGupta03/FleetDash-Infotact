@@ -1,4 +1,6 @@
-require("dotenv").config();
+require("dotenv").config({
+  path: require("node:path").resolve(__dirname, "../../.env"),
+});
 
 const {
   connectDatabase,
@@ -10,7 +12,8 @@ const {
 } = require("../../config/telemetryBuckets");
 
 async function main() {
-  const vehicleId = `VH-REPEATED-INGESTION-${Date.now()}`;
+  const runId = Date.now();
+  const vehicleId = `VH-REPEATED-INGESTION-${runId}`;
 
   try {
     const db = await connectDatabase();
@@ -18,37 +21,39 @@ async function main() {
 
     const readings = [
       {
-        vehicleId,
         latitude: 28.6139,
         longitude: 77.209,
         timestamp: "2026-10-24T14:10:00.000Z",
       },
       {
-        vehicleId,
         latitude: 28.614,
         longitude: 77.2091,
         timestamp: "2026-10-24T14:20:00.000Z",
       },
       {
-        vehicleId,
         latitude: 28.615,
         longitude: 77.21,
         timestamp: "2026-10-24T14:30:00.000Z",
       },
     ];
 
-    for (const reading of readings) {
-      await storeTelemetry(reading);
+    for (const [index, reading] of readings.entries()) {
+      const result = await storeTelemetry({
+        ...reading,
+        eventId: `${vehicleId}-EVENT-${index + 1}`,
+        vehicleId,
+      });
+
+      if (result.duplicate) {
+        throw new Error(`Unexpected duplicate at reading ${index + 1}`);
+      }
     }
 
-    const buckets = await collection
-      .find({ vehicleId })
-      .toArray();
+    const buckets = await collection.find({ vehicleId }).toArray();
+    const bucket = buckets[0];
 
     console.log("Test vehicle:", vehicleId);
     console.log("Buckets found:", buckets.length);
-
-    const bucket = buckets[0];
 
     if (bucket) {
       console.log({

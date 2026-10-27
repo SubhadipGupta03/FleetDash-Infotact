@@ -1,3 +1,4 @@
+
 import http from 'k6/http';
 import { check } from 'k6';
 
@@ -20,14 +21,19 @@ export const options = {
 };
 
 export default function () {
+  const eventId = `pool-ramp50-${__VU}-${__ITER}`;
+
+  const payload = JSON.stringify({
+    eventId,
+    vehicleId: 'VH-K6-POOL-RAMP50-RETRY-20261023',
+    latitude: 28.6139,
+    longitude: 77.2090,
+    timestamp: new Date().toISOString(),
+  });
+
   const response = http.post(
     'http://localhost:5000/api/telemetry/ingest',
-    JSON.stringify({
-      vehicleId: 'VH-K6-POOL-RAMP50-RETRY-20261023',
-      latitude: 28.6139,
-      longitude: 77.2090,
-      timestamp: new Date().toISOString(),
-    }),
+    payload,
     {
       headers: { 'Content-Type': 'application/json' },
       timeout: '30s',
@@ -45,5 +51,3 @@ export default function () {
     },
   });
 }
-
-

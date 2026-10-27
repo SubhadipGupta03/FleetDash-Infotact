@@ -34,12 +34,40 @@ const queue = [];
 
 let initialized = false;
 let closing = false;
+let closePromise = null;
+
+const INITIAL_RESTART_DELAY_MS = 100;
+const MAX_RESTART_DELAY_MS = 5000;
+
+function createPoolError(message, code) {
+  const error = new Error(message);
+
+  if (code) {
+    error.code = code;
+  }
+
+  return error;
+}
+
+function rejectCurrentJob(slot, error) {
+  const job = slot.current;
+  slot.current = null;
+
+  if (job) {
+    job.reject(error);
+  }
+}
 
 function dispatch() {
   if (closing) return;
 
   for (const slot of slots) {
-    if (!slot.worker || slot.current || queue.length === 0) {
+    if (
+      !slot.worker ||
+      slot.failed ||
+      slot.current ||
+      queue.length === 0
+    ) {
       continue;
     }
 
@@ -54,11 +82,9 @@ function dispatch() {
     }
   }
 
-  // If a slot failed to accept a message, continue assigning
-  // remaining queued jobs to other available workers.
   if (!closing && queue.length > 0) {
     const hasAvailableWorker = slots.some(
-      (slot) => slot.worker && !slot.current
+      (slot) => slot.worker && !slot.failed && !slot.current
     );
 
     if (hasAvailableWorker) {
@@ -67,22 +93,18 @@ function dispatch() {
   }
 }
 
-function rejectCurrentJob(slot, error) {
-  const job = slot.current;
-  slot.current = null;
-
-  if (job) {
-    job.reject(error);
-  }
-}
-
 function scheduleRestart(slot) {
-  if (closing || slot.restartScheduled) return;
+  if (closing || slot.restartTimer) return;
 
-  slot.restartScheduled = true;
+  const delay = Math.min(
+    INITIAL_RESTART_DELAY_MS * 2 ** slot.restartAttempts,
+    MAX_RESTART_DELAY_MS
+  );
 
-  setTimeout(() => {
-    slot.restartScheduled = false;
+  slot.restartAttempts += 1;
+
+  slot.restartTimer = setTimeout(() => {
+    slot.restartTimer = null;
 
     if (closing || slot.worker) return;
 
@@ -93,51 +115,103 @@ function scheduleRestart(slot) {
         "Failed to restart telemetry worker:",
         error.message
       );
+
       scheduleRestart(slot);
     }
-  }, 100);
+  }, delay);
+
+  // A pending restart timer should not keep the process alive by itself.
+  slot.restartTimer.unref?.();
+}
+
+function handleWorkerFailure(slot, worker, error) {
+  if (slot.worker !== worker || slot.failed) return;
+
+  slot.failed = true;
+
+  rejectCurrentJob(
+    slot,
+    createPoolError(
+      `Telemetry worker failed: ${error.message}`,
+      "WORKER_FAILED"
+    )
+  );
+
+  console.error("Telemetry worker failure:", error.message);
+
+  // The exit handler will detach this worker and schedule its replacement.
 }
 
 function spawnWorker(slot) {
   if (closing || slot.worker) return;
 
   const worker = new Worker(workerPath);
+
   slot.worker = worker;
+  slot.failed = false;
 
   worker.on("message", (result) => {
-    if (slot.worker !== worker) return;
+    if (slot.worker !== worker || slot.failed || closing) return;
 
     const job = slot.current;
-    if (!job) return;
+
+    if (!job) {
+      console.error("Telemetry worker returned an unexpected message");
+      return;
+    }
 
     slot.current = null;
-    job.resolve(result);
+
+    if (
+      !result ||
+      typeof result !== "object" ||
+      typeof result.success !== "boolean"
+    ) {
+      job.reject(
+        createPoolError(
+          "Telemetry worker returned an invalid response",
+          "WORKER_INVALID_RESPONSE"
+        )
+      );
+    } else {
+      job.resolve(result);
+    }
 
     dispatch();
   });
 
-  worker.on("error", (error) => {
-    if (slot.worker !== worker) return;
+  worker.on("messageerror", (error) => {
+    handleWorkerFailure(slot, worker, error);
+  });
 
-    rejectCurrentJob(slot, error);
-    console.error("Telemetry worker error:", error.message);
+  worker.on("error", (error) => {
+    handleWorkerFailure(slot, worker, error);
   });
 
   worker.on("exit", (code) => {
     if (slot.worker !== worker) return;
 
     slot.worker = null;
+    slot.failed = false;
 
     if (slot.current) {
       rejectCurrentJob(
         slot,
-        new Error(`Telemetry worker exited unexpectedly (${code})`)
+        createPoolError(
+          `Telemetry worker exited before completing its job (code ${code})`,
+          "WORKER_EXITED"
+        )
       );
     }
 
-    if (!closing) {
-      scheduleRestart(slot);
+    if (closing) return;
+
+    if (code !== 0) {
+      console.error(`Telemetry worker exited with code ${code}`);
     }
+
+    scheduleRestart(slot);
+    dispatch();
   });
 
   dispatch();
@@ -152,7 +226,9 @@ function initializeTelemetryWorkerPool() {
     const slot = {
       worker: null,
       current: null,
-      restartScheduled: false,
+      failed: false,
+      restartTimer: null,
+      restartAttempts: 0,
     };
 
     slots.push(slot);
@@ -164,6 +240,7 @@ function initializeTelemetryWorkerPool() {
         "Failed to start telemetry worker:",
         error.message
       );
+
       scheduleRestart(slot);
     }
   }
@@ -178,14 +255,22 @@ function processTelemetry(data) {
 
   return new Promise((resolve, reject) => {
     if (closing) {
-      reject(new Error("Telemetry worker pool is shutting down"));
+      reject(
+        createPoolError(
+          "Telemetry worker pool is shutting down",
+          "WORKER_POOL_CLOSING"
+        )
+      );
       return;
     }
 
     if (queue.length >= maxQueue) {
-      const error = new Error("Telemetry processing queue is full");
-      error.code = "WORKER_QUEUE_FULL";
-      reject(error);
+      reject(
+        createPoolError(
+          "Telemetry processing queue is full",
+          "WORKER_QUEUE_FULL"
+        )
+      );
       return;
     }
 
@@ -194,32 +279,51 @@ function processTelemetry(data) {
   });
 }
 
-async function closeTelemetryWorkerPool() {
-  if (closing) return;
+function closeTelemetryWorkerPool() {
+  if (closePromise) return closePromise;
 
   closing = true;
 
-  const shutdownError = new Error(
-    "Telemetry worker pool is shutting down"
-  );
+  closePromise = (async () => {
+    const shutdownError = createPoolError(
+      "Telemetry worker pool is shutting down",
+      "WORKER_POOL_CLOSING"
+    );
 
-  while (queue.length) {
-    queue.shift().reject(shutdownError);
-  }
+    while (queue.length > 0) {
+      queue.shift().reject(shutdownError);
+    }
 
-  await Promise.all(
-    slots.map(async (slot) => {
-      if (slot.current) {
-        rejectCurrentJob(slot, shutdownError);
-      }
+    await Promise.all(
+      slots.map(async (slot) => {
+        if (slot.restartTimer) {
+          clearTimeout(slot.restartTimer);
+          slot.restartTimer = null;
+        }
 
-      if (slot.worker) {
+        if (slot.current) {
+          rejectCurrentJob(slot, shutdownError);
+        }
+
         const worker = slot.worker;
         slot.worker = null;
-        await worker.terminate();
-      }
-    })
-  );
+        slot.failed = true;
+
+        if (worker) {
+          try {
+            await worker.terminate();
+          } catch (error) {
+            console.error(
+              "Error terminating telemetry worker:",
+              error.message
+            );
+          }
+        }
+      })
+    );
+  })();
+
+  return closePromise;
 }
 
 async function simulateWorkerFailureForTest() {
@@ -230,7 +334,7 @@ async function simulateWorkerFailureForTest() {
   }
 
   const slot = slots.find(
-    (item) => item.worker && !item.current
+    (item) => item.worker && !item.current && !item.failed
   );
 
   if (!slot) {

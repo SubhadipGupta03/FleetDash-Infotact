@@ -15,6 +15,7 @@ export default function () {
   const url = 'http://localhost:5000/api/telemetry/ingest';
 
   const payload = JSON.stringify({
+    eventId: `k6-${Date.now()}-${__VU}-${__ITER}`,
     vehicleId: 'VH-K6-CLEAN-001',
     latitude: 28.6139,
     longitude: 77.2090,
@@ -33,6 +34,13 @@ export default function () {
     'response reports success': (r) => {
       try {
         return JSON.parse(r.body).success === true;
+      } catch {
+        return false;
+      }
+    },
+    'event is not a duplicate': (r) => {
+      try {
+        return JSON.parse(r.body).duplicate === false;
       } catch {
         return false;
       }

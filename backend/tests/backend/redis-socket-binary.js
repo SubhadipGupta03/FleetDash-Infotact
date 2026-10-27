@@ -22,11 +22,12 @@ socket.on("connect", async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        vehicleId,
-        latitude: 28.6139,
-        longitude: 77.2090,
-        timestamp: new Date().toISOString(),
-      }),
+  eventId: `event-${vehicleId}`,
+  vehicleId,
+  latitude: 28.6139,
+  longitude: 77.2090,
+  timestamp: new Date().toISOString(),
+}),
     });
 
     const result = await response.json();

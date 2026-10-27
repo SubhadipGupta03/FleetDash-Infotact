@@ -31,12 +31,15 @@ const server = http.createServer(app);
 
 function postTelemetry(port, vehicleId) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({
-      vehicleId,
-      latitude: 28.6139,
-      longitude: 77.209,
-      timestamp: new Date().toISOString(),
-    });
+
+const body = JSON.stringify({
+  eventId: `event-${vehicleId}`,
+  vehicleId,
+  latitude: 28.6139,
+  longitude: 77.209,
+  timestamp: new Date().toISOString(),
+});
+
 
     const req = http.request(
       {

@@ -1,4 +1,3 @@
-
 const { parentPort } = require("node:worker_threads");
 const { performance } = require("node:perf_hooks");
 
@@ -31,9 +30,15 @@ function processTelemetry(data) {
     throw new Error("longitude must be a number between -180 and 180");
   }
 
-  const parsedTimestamp = timestamp
-    ? new Date(timestamp)
-    : new Date();
+  if (
+    timestamp === undefined ||
+    timestamp === null ||
+    timestamp === ""
+  ) {
+    throw new Error("timestamp is required");
+  }
+
+  const parsedTimestamp = new Date(timestamp);
 
   if (Number.isNaN(parsedTimestamp.getTime())) {
     throw new Error("timestamp must be a valid date");
@@ -47,21 +52,29 @@ function processTelemetry(data) {
   };
 }
 
+if (!parentPort) {
+  throw new Error("Telemetry worker must run inside a worker thread");
+}
+
 parentPort.on("message", (data) => {
+  const workerStart = performance.now();
+
   try {
-    const workerStart = performance.now();
     const telemetry = processTelemetry(data);
-    const workerDurationMs = performance.now() - workerStart;
 
     parentPort.postMessage({
       success: true,
       telemetry,
-      workerDurationMs,
+      workerDurationMs: performance.now() - workerStart,
     });
   } catch (error) {
     parentPort.postMessage({
       success: false,
-      error: error.message,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unknown telemetry validation error",
+      workerDurationMs: performance.now() - workerStart,
     });
   }
 });
