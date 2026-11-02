@@ -21,3 +21,15 @@ export type TelemetryPoint = {
   timestamp?: string | number
   [key: string]: unknown
 }
+export type GeofenceAlert = {
+  _id: string
+  eventId: string
+  vehicleId: string
+  geofenceId: string
+  geofenceName: string
+  type: 'GEOFENCE_BREACH'
+  message: string
+  latitude: number
+  longitude: number
+  timestamp: string
+}

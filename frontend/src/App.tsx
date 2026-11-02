@@ -29,7 +29,7 @@ useEffect(() => {
   const interval = setInterval(updateNow, 1000)
   return () => clearInterval(interval)
 }, [])
-  const { connected, connectionStatus, telemetry, error } = useTelemetry()
+  const { connected, connectionStatus, telemetry, alerts, error } = useTelemetry()
 
   const latestVehicles = useMemo(() => {
     const latestByVehicle = new Map<string, TelemetryPoint>()
@@ -164,9 +164,9 @@ useEffect(() => {
           </article>
 
           <article className="summary-card">
-            <p>Pending Alerts</p>
-            <h3>—</h3>
-            <span>Alert data source not connected</span>
+            <p>Geofence Alerts</p>
+<h3>{alerts.length}</h3>
+<span>Geofence breach alerts received</span>
           </article>
 
           <article className="summary-card">
@@ -258,6 +258,33 @@ useEffect(() => {
                 {connected ? 'Live' : 'Offline'}
               </span>
             </div>
+            <div className="geofence-alert-section">
+  <h4>Geofence Breach Alerts</h4>
+
+  {alerts.length === 0 ? (
+    <p className="alert-empty">
+      No geofence breaches detected.
+    </p>
+  ) : (
+    <div className="activity-list">
+      {alerts.map((alert) => (
+        <div className="activity-row" key={alert._id}>
+          <span className="activity-indicator alert-indicator" />
+          <div>
+            <strong>{alert.vehicleId}</strong>
+            <p>{alert.message}</p>
+            <span>
+              {alert.timestamp
+                ? new Date(alert.timestamp).toLocaleString()
+                : 'Timestamp unavailable'}
+            </span>
+          </div>
+          <span className="panel-tag">Breach</span>
+        </div>
+      ))}
+    </div>
+  )}
+</div>
 
             {latestActivity.length === 0 ? (
               <div className="empty-state">

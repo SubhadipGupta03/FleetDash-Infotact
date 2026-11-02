@@ -4,15 +4,18 @@ import {
   socket,
   type ConnectionStatus,
   type TelemetryPoint,
+  type GeofenceAlert,
 } from '../services/socket'
 
 const MAX_TELEMETRY_POINTS = 5000
 const FLUSH_INTERVAL_MS = 100
+const MAX_GEOFENCE_ALERTS = 100
 
 type TelemetryState = {
   connected: boolean
   connectionStatus: ConnectionStatus | null
   telemetry: TelemetryPoint[]
+  alerts: GeofenceAlert[]
   error: string | null
 }
 
@@ -96,6 +99,7 @@ export function useTelemetry() {
     connected: socket.connected,
     connectionStatus: null,
     telemetry: [],
+    alerts: [],
     error: null,
   })
 
@@ -163,11 +167,33 @@ export function useTelemetry() {
       pending.push(...(Array.isArray(decoded) ? decoded : [decoded]))
     }
 
+function handleGeofenceAlert(payload: unknown) {
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    !('vehicleId' in payload) ||
+    !('message' in payload) ||
+    !('type' in payload) ||
+    (payload as Record<string, unknown>).type !== 'GEOFENCE_BREACH'
+  ) {
+    console.warn('Received an invalid geofence alert payload.')
+    return
+  }
+
+  const alert = payload as GeofenceAlert
+
+  setState((previous) => ({
+    ...previous,
+    alerts: [alert, ...previous.alerts].slice(0, MAX_GEOFENCE_ALERTS),
+  }))
+}
+
     socket.on('connect', handleConnect)
     socket.on('disconnect', handleDisconnect)
     socket.on('connect_error', handleConnectionError)
     socket.on('connection-status', handleConnectionStatus)
     socket.on('telemetry-update', handleTelemetry)
+    socket.on('geofence-alert', handleGeofenceAlert)
 
     if (!socket.connected) {
       socket.connect()
@@ -182,6 +208,7 @@ export function useTelemetry() {
       socket.off('connect_error', handleConnectionError)
       socket.off('connection-status', handleConnectionStatus)
       socket.off('telemetry-update', handleTelemetry)
+      socket.off('geofence-alert', handleGeofenceAlert)
     }
   }, [])
 
