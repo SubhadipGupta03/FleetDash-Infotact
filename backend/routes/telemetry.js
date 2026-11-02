@@ -1,4 +1,7 @@
-﻿const { performance } = require("node:perf_hooks");
+﻿const {
+  processGeofenceAlerts,
+} = require("../services/geofenceAlertService");
+const { performance } = require("node:perf_hooks");
 const express = require("express");
 const { storeTelemetry } = require("../config/telemetryBuckets");
 const { processTelemetry } = require("../config/telemetryWorkerPool");
@@ -105,6 +108,7 @@ router.post("/ingest", async (req, res) => {
   // Do not broadcast an event already recorded as a duplicate.
   // Reliable recovery after a failed publish requires a persistent
   // delivery/outbox mechanism, which must be implemented with storage.
+  
   if (bucket.duplicate) {
     return res.status(200).json({
       success: true,
@@ -112,7 +116,17 @@ router.post("/ingest", async (req, res) => {
       duplicate: true,
       telemetry,
       bucket,
+      geofenceAlerts: [],
     });
+  }
+
+// Process geofence entry and exit transitions.
+  let geofenceAlerts = [];
+
+  try {
+    geofenceAlerts = await processGeofenceAlerts(telemetry);
+  } catch (error) {
+    console.error("Geofence alert processing error:", error.message);
   }
 
   try {
@@ -151,7 +165,9 @@ router.post("/ingest", async (req, res) => {
     duplicate: false,
     telemetry,
     bucket,
+    geofenceAlerts,
   });
 });
 
 module.exports = router;
+    
