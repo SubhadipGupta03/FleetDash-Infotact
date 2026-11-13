@@ -22,12 +22,42 @@ const {
   subscriber,
 } = require("./config/redisClient");
 const { setSocketServer } = require("./config/socket");
-
+const {
+  ensureGeofenceAlertOutboxIndexes,
+  startGeofenceAlertOutbox,
+  stopGeofenceAlertOutbox,
+} = require("./services/geofenceAlertOutbox");
 const PORT = Number.parseInt(process.env.PORT || "5000", 10);
 const TELEMETRY_CHANNEL = "fleetdash:telemetry";
-
+const GEOFENCE_ALERT_CHANNEL = "fleetdash:geofence-alerts";
 const app = express();
 const httpServer = http.createServer(app);
+const FRONTEND_ORIGIN =
+  process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+
+app.use((req, res, next) => {
+  const requestOrigin = req.headers.origin;
+
+  if (requestOrigin === FRONTEND_ORIGIN) {
+    res.setHeader("Access-Control-Allow-Origin", FRONTEND_ORIGIN);
+  }
+
+  res.setHeader("Vary", "Origin");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, OPTIONS"
+  );
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization"
+  );
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
 
 const io = new Server(httpServer, {
   cors: {
@@ -118,8 +148,24 @@ async function subscribeToTelemetry() {
       }
     });
 
+    await subscriber.subscribe(GEOFENCE_ALERT_CHANNEL, (message) => {
+      try {
+        const alert = JSON.parse(message);
+        io.emit("geofence-alert", alert);
+        console.log(
+          `Geofence breach alert: ${alert.vehicleId} exited ${alert.geofenceName}`
+        );
+      } catch (error) {
+        console.error(
+          "Invalid geofence alert from Redis:",
+          error.message
+        );
+      }
+    });
+
     telemetrySubscriptionInitialized = true;
     console.log(`Subscribed to ${TELEMETRY_CHANNEL}`);
+    console.log(`Subscribed to ${GEOFENCE_ALERT_CHANNEL}`);
   })();
 
   try {
@@ -266,6 +312,8 @@ async function closeRedisClient(client, name) {
 }
 
 async function cleanupResources() {
+  await stopGeofenceAlertOutbox();
+
   await new Promise((resolve) => {
     io.close(() => resolve());
   });
@@ -282,9 +330,12 @@ async function startServer() {
   try {
     await connectDatabase();
     await ensureTelemetryIndexes();
+    await ensureGeofenceAlertOutboxIndexes();
+
     await connectRedis();
 
     await subscribeToTelemetry();
+startGeofenceAlertOutbox();
 
     await new Promise((resolve, reject) => {
       const onError = (error) => {

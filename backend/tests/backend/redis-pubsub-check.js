@@ -6,10 +6,9 @@ const rootNodes = [7001, 7002, 7003].map((port) => ({
 
 const subscriber = createCluster({ rootNodes });
 const publisher = createCluster({ rootNodes });
-const channel = "fleetdash:test:pubsub";
-const expected = "fleetdash-pubsub-check";
+const channel = `fleetdash:test:pubsub:${Date.now()}`;
+const expected = `fleetdash-pubsub-check-${Date.now()}`;
 
-let finished = false;
 let timer;
 
 async function cleanup() {
@@ -34,41 +33,36 @@ async function runTest() {
     );
 
     await Promise.all([subscriber.connect(), publisher.connect()]);
+    console.log("PASS: Both Redis Cluster clients connected");
 
-    timer = setTimeout(async () => {
-      if (finished) return;
-      finished = true;
-      console.error("FAIL: Pub/Sub delivery timed out");
-      await cleanup();
-      process.exitCode = 1;
-    }, 5000);
-
-    await subscriber.subscribe(channel, async (message) => {
-      if (finished) return;
-      finished = true;
-
-      if (message === expected) {
-        console.log("PASS: Redis Cluster Pub/Sub message received correctly");
-      } else {
-        console.error("FAIL: Unexpected message:", message);
-        process.exitCode = 1;
-      }
-
-      await cleanup();
+    let resolveMessage;
+    const messageReceived = new Promise((resolve) => {
+      resolveMessage = resolve;
     });
 
-    const count = await publisher.publish(channel, expected);
-    console.log("Publish recipient count:", count);
+    timer = setTimeout(() => resolveMessage(false), 5000);
 
-    if (count < 1 && !finished) {
-      finished = true;
-      console.error("FAIL: No subscribers received the message");
-      process.exitCode = 1;
-      await cleanup();
+    await subscriber.subscribe(channel, (message) => {
+      if (message === expected) resolveMessage(true);
+    });
+
+    console.log("PASS: Subscription command completed");
+
+    const recipientCount = await publisher.publish(channel, expected);
+    console.log("Publish recipient count (diagnostic only):", recipientCount);
+
+    const delivered = await messageReceived;
+
+    if (!delivered) {
+      throw new Error("Timed out waiting for the expected Pub/Sub message");
     }
+
+    console.log("PASS: Expected message received by the Cluster subscriber");
+    console.log("PASS: Redis Cluster Pub/Sub delivery verified");
   } catch (error) {
     console.error("FAIL:", error.message);
     process.exitCode = 1;
+  } finally {
     await cleanup();
   }
 }

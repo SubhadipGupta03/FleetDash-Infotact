@@ -8,6 +8,7 @@ const { processTelemetry } = require("../config/telemetryWorkerPool");
 const { publisher } = require("../config/redisClient");
 
 const router = express.Router();
+const { getDatabase } = require("../config/database");
 const timingEnabled = process.env.TELEMETRY_TIMING === "true";
 const TELEMETRY_CHANNEL = "fleetdash:telemetry";
 
@@ -108,7 +109,7 @@ router.post("/ingest", async (req, res) => {
   // Do not broadcast an event already recorded as a duplicate.
   // Reliable recovery after a failed publish requires a persistent
   // delivery/outbox mechanism, which must be implemented with storage.
-  
+
   if (bucket.duplicate) {
     return res.status(200).json({
       success: true,
@@ -169,5 +170,99 @@ router.post("/ingest", async (req, res) => {
   });
 });
 
+// Retrieve historical fleet telemetry for dashboard initialization.
+router.get("/history", async (req, res) => {
+  try {
+    const db = getDatabase();
+
+    const buckets = db.collection("telemetryBuckets");
+const events = db.collection("telemetryEvents");
+const alerts = db.collection("geofenceAlerts");
+
+const DEMO_VEHICLE_IDS = [
+  "VH-K6-DISTRIBUTED-34",
+  "VH-K6-DISTRIBUTED-38",
+  "VH-K6-DISTRIBUTED-7",
+  "VH-K6-DISTRIBUTED-24",
+  "VH-K6-DISTRIBUTED-59",
+];
+
+
+const [
+  totalTelemetryEvents,
+  vehicleSummaries,
+  recentAlerts,
+  recentBuckets,
+] = await Promise.all([
+  events.countDocuments({
+    vehicleId: { $in: DEMO_VEHICLE_IDS },
+  }),
+
+  buckets.aggregate([
+    {
+      $match: {
+        vehicleId: { $in: DEMO_VEHICLE_IDS },
+      },
+    },
+    {
+      $unwind: "$readings",
+    },
+    {
+      $sort: {
+        "readings.timestamp": -1,
+      },
+    },
+    {
+      $group: {
+        _id: "$vehicleId",
+        latestReading: { $first: "$readings" },
+        telemetryCount: { $sum: 1 },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        vehicleId: "$_id",
+        latitude: "$latestReading.latitude",
+        longitude: "$latestReading.longitude",
+        timestamp: "$latestReading.timestamp",
+        telemetryCount: 1,
+      },
+    },
+  ]).toArray(),
+
+  alerts.find({
+    vehicleId: { $in: DEMO_VEHICLE_IDS },
+  })
+    .sort({ timestamp: -1 })
+    .limit(50)
+    .toArray(),
+
+  buckets.find({
+    vehicleId: { $in: DEMO_VEHICLE_IDS },
+  })
+    .sort({ bucketStart: -1 })
+    .limit(100)
+    .toArray(),
+]);
+
+
+    return res.status(200).json({
+      success: true,
+      totalVehicles: vehicleSummaries.length,
+      totalTelemetryEvents,
+      vehicles: vehicleSummaries,
+      geofenceAlerts: recentAlerts,
+      recentBuckets,
+    });
+  } catch (error) {
+    console.error("Historical telemetry retrieval error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: "Failed to retrieve historical telemetry",
+    });
+  }
+});
+
 module.exports = router;
-    

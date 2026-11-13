@@ -1,4 +1,4 @@
-
+import FleetMap from './components/FleetMap'
 import './App.css'
 import { useEffect, useMemo, useState } from 'react'
 import { useTelemetry } from './hooks/useTelemetry'
@@ -22,6 +22,7 @@ function getTimestamp(point: TelemetryPoint): number {
 
 function App() {
   const [now, setNow] = useState(0)
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null)
 
 useEffect(() => {
   const updateNow = () => setNow(Date.now())
@@ -69,37 +70,29 @@ useEffect(() => {
       vehicle.longitude <= 180,
   )
 
-  const minLatitude = Math.min(
-    ...validLocations.map((vehicle) => vehicle.latitude),
-  )
-  const maxLatitude = Math.max(
-    ...validLocations.map((vehicle) => vehicle.latitude),
-  )
-  const minLongitude = Math.min(
-    ...validLocations.map((vehicle) => vehicle.longitude),
-  )
-  const maxLongitude = Math.max(
-    ...validLocations.map((vehicle) => vehicle.longitude),
-  )
+  const selectedVehicle =
+  validLocations.find(
+    (vehicle) => vehicle.vehicleId === selectedVehicleId,
+  ) ?? null
 
-  function getPosition(vehicle: TelemetryPoint) {
-    const latitudeRange = maxLatitude - minLatitude
-    const longitudeRange = maxLongitude - minLongitude
+const selectedVehicleTimestamp = selectedVehicle
+  ? getTimestamp(selectedVehicle)
+  : 0
 
-    const x =
-      longitudeRange === 0
-        ? 50
-        : 8 + ((vehicle.longitude - minLongitude) / longitudeRange) * 84
+const selectedVehicleIsActive =
+  selectedVehicleTimestamp > 0 &&
+  now - selectedVehicleTimestamp >= 0 &&
+  now - selectedVehicleTimestamp <= ACTIVE_WINDOW_MS
 
-    const y =
-      latitudeRange === 0
-        ? 50
-        : 92 - ((vehicle.latitude - minLatitude) / latitudeRange) * 84
+const selectedVehicleUpdateCount = selectedVehicle
+  ? telemetry.filter(
+      (point) => point.vehicleId === selectedVehicle.vehicleId,
+    ).length
+  : 0
 
-    return { left: `${x}%`, top: `${y}%` }
-  }
-
-  const latestActivity = [...telemetry].reverse().slice(0, 6)
+  const latestActivity = [...telemetry]
+  .sort((a, b) => getTimestamp(b) - getTimestamp(a))
+  .slice(0, 6)
 
   return (
     <main className="dashboard">
@@ -172,7 +165,7 @@ useEffect(() => {
           <article className="summary-card">
             <p>Telemetry Events</p>
             <h3>{telemetry.length}</h3>
-            <span>Events received this session</span>
+<span>Historical and live events loaded</span>
           </article>
         </section>
 
@@ -188,65 +181,95 @@ useEffect(() => {
               </span>
             </div>
 
-            <div
-              className="live-map"
-              role="img"
-              aria-label={`Coordinate plot showing ${validLocations.length} vehicle locations`}
-            >
-              <div className="map-grid" />
-
-              {validLocations.length === 0 ? (
-                <div className="map-message">
-                  <span className="map-pin">◎</span>
-                  <h4>Waiting for vehicle locations</h4>
-                  <p>
-                    Valid latitude and longitude coordinates will appear here
-                    when telemetry arrives.
-                  </p>
-                </div>
-              ) : (
-                validLocations.map((vehicle) => (
-                  <div
-                    key={vehicle.vehicleId}
-                    className="vehicle-marker"
-                    style={getPosition(vehicle)}
-                    title={`${vehicle.vehicleId}: ${vehicle.latitude}, ${vehicle.longitude}`}
-                  >
-                    <span className="vehicle-marker-dot" />
-                    <span className="vehicle-marker-label">
-                      {vehicle.vehicleId}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
+            <FleetMap
+  vehicles={validLocations}
+  selectedVehicleId={selectedVehicleId}
+  onSelectVehicle={setSelectedVehicleId}
+/>
 
             <p className="map-note">
-              Coordinate plot, not a geographic street map. Positions are
-              relative to the received coordinates.
-            </p>
+  Live vehicle positions displayed on an interactive OpenStreetMap.
+  Select a vehicle marker to view its coordinates.
+</p>
 
             <div className="vehicle-list">
-              {validLocations.map((vehicle) => (
-                <div className="vehicle-row" key={vehicle.vehicleId}>
-                  <div>
-                    <strong>{vehicle.vehicleId}</strong>
-                    <span>
-                      {vehicle.latitude.toFixed(4)},{' '}
-                      {vehicle.longitude.toFixed(4)}
-                    </span>
-                  </div>
-                  <span className="panel-tag">
-                    {getTimestamp(vehicle) > 0 &&
-                    now - getTimestamp(vehicle) >= 0 &&
-                    now - getTimestamp(vehicle) <= ACTIVE_WINDOW_MS
-                      ? 'Active'
-                      : 'Stale'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </article>
+  {validLocations.map((vehicle) => {
+    const isSelected = vehicle.vehicleId === selectedVehicleId
+
+    const timestamp = getTimestamp(vehicle)
+    const isActive =
+      timestamp > 0 &&
+      now - timestamp >= 0 &&
+      now - timestamp <= ACTIVE_WINDOW_MS
+
+    return (
+      <div
+        className={`vehicle-row ${isSelected ? 'selected' : ''}`}
+        key={vehicle.vehicleId}
+        onClick={() => setSelectedVehicleId(vehicle.vehicleId)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            setSelectedVehicleId(vehicle.vehicleId)
+          }
+        }}
+      >
+        <div>
+          <strong>{vehicle.vehicleId}</strong>
+          <span>
+            {vehicle.latitude.toFixed(4)},{' '}
+            {vehicle.longitude.toFixed(4)}
+          </span>
+        </div>
+
+        <span className="panel-tag">
+          {isActive ? 'Active' : 'Stale'}
+        </span>
+      </div>
+    )
+    })}
+</div>
+
+<div className="vehicle-details">
+  <h3>Selected Vehicle Details</h3>
+
+  {selectedVehicle ? (
+    <>
+      <p>
+        <strong>Vehicle ID:</strong> {selectedVehicle.vehicleId}
+      </p>
+
+      <p>
+        <strong>Latitude:</strong> {selectedVehicle.latitude.toFixed(6)}
+      </p>
+
+      <p>
+        <strong>Longitude:</strong> {selectedVehicle.longitude.toFixed(6)}
+      </p>
+
+      <p>
+        <strong>Status:</strong> {selectedVehicleIsActive ? 'Active' : 'Stale'}
+      </p>
+
+      <p>
+        <strong>Last Update:</strong>{' '}
+        {selectedVehicleTimestamp > 0
+          ? new Date(selectedVehicleTimestamp).toLocaleString()
+          : 'Unavailable'}
+      </p>
+
+      <p>
+        <strong>Telemetry Updates:</strong> {selectedVehicleUpdateCount}
+      </p>
+    </>
+  ) : (
+    <p>Select a vehicle to view its details.</p>
+  )}
+</div>
+
+</article>
 
           <article className="panel activity-panel" id="alerts">
             <div className="panel-heading">

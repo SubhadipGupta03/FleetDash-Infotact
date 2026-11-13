@@ -1,6 +1,6 @@
-const { io } = require("socket.io-client");
+﻿const { io } = require("socket.io-client");
 
-const SERVER_URL = "http://localhost:5000";
+const SERVER_URL = process.env.BASE_URL || "http://localhost:5000";
 const vehicleId = `VH-RECONNECT-${Date.now()}`;
 
 const socket = io(SERVER_URL, {
@@ -43,19 +43,17 @@ socket.on("connect", async () => {
     console.log("PASS: Client reconnected successfully");
 
     try {
-      const response = await fetch(
-        `${SERVER_URL}/api/telemetry/ingest`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            vehicleId,
-            latitude: 28.6139,
-            longitude: 77.2090,
-            timestamp: new Date().toISOString(),
-          }),
-        }
-      );
+      const response = await fetch(`${SERVER_URL}/api/telemetry/ingest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          eventId: `EVT-RECONNECT-${Date.now()}`,
+          vehicleId,
+          latitude: 28.6139,
+          longitude: 77.2090,
+          timestamp: new Date().toISOString(),
+        }),
+      });
 
       const result = await response.json();
       console.log("Ingestion HTTP status:", response.status);

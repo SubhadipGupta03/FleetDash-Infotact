@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from 'react'
 import {
   socket,
@@ -6,10 +5,13 @@ import {
   type TelemetryPoint,
   type GeofenceAlert,
 } from '../services/socket'
+import { updateLatestPosition } from '../services/telemetryStore'
 
 const MAX_TELEMETRY_POINTS = 5000
 const FLUSH_INTERVAL_MS = 100
 const MAX_GEOFENCE_ALERTS = 100
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL || 'http://localhost:5000'
 
 type TelemetryState = {
   connected: boolean
@@ -18,6 +20,29 @@ type TelemetryState = {
   alerts: GeofenceAlert[]
   error: string | null
 }
+type TelemetryHistoryResponse = {
+  success: boolean
+  totalVehicles: number
+  totalTelemetryEvents: number
+  vehicles: {
+    vehicleId: string
+    latitude: number
+    longitude: number
+    timestamp: string | number | Date
+    telemetryCount: number
+  }[]
+  geofenceAlerts: GeofenceAlert[]
+  recentBuckets: {
+    vehicleId: string
+    readings: {
+      eventId?: string
+      timestamp: string | number | Date
+      latitude: number
+      longitude: number
+    }[]
+  }[]
+}
+
 
 function isTelemetryPoint(value: unknown): value is TelemetryPoint {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -122,6 +147,91 @@ export function useTelemetry() {
     }
 
     const flushTimer = setInterval(flushTelemetry, FLUSH_INTERVAL_MS)
+        const historyController = new AbortController()
+
+    async function loadTelemetryHistory() {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/telemetry/history`,
+          { signal: historyController.signal },
+        )
+
+        if (!response.ok) {
+          throw new Error(
+            `History API failed with status ${response.status}`,
+          )
+        }
+
+        const history =
+          (await response.json()) as TelemetryHistoryResponse
+
+        if (!history.success) {
+          throw new Error('Failed to load telemetry history.')
+        }
+
+        const historicalTelemetry: TelemetryPoint[] =
+          history.recentBuckets.flatMap((bucket) =>
+            bucket.readings.map((reading) => ({
+              vehicleId: bucket.vehicleId,
+              latitude: reading.latitude,
+              longitude: reading.longitude,
+              timestamp:
+                reading.timestamp instanceof Date
+                  ? reading.timestamp.toISOString()
+                  : reading.timestamp,
+              eventId: reading.eventId,
+            })),
+          )
+          for (const point of historicalTelemetry) {
+  updateLatestPosition(point)
+}
+
+        setState((previous) => {
+          const combined = [
+            ...historicalTelemetry,
+            ...previous.telemetry,
+          ]
+
+          const uniqueTelemetry = Array.from(
+            new Map(
+              combined.map((point) => [
+                typeof point.eventId === 'string'
+                  ? point.eventId
+                  : `${point.vehicleId}-${point.timestamp}-${point.latitude}-${point.longitude}`,
+                point,
+              ]),
+            ).values(),
+          )
+
+          return {
+            ...previous,
+            telemetry: uniqueTelemetry.slice(-MAX_TELEMETRY_POINTS),
+            alerts: [
+              ...history.geofenceAlerts,
+              ...previous.alerts,
+            ].slice(0, MAX_GEOFENCE_ALERTS),
+            error: null,
+          }
+        })
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.name === 'AbortError'
+        ) {
+          return
+        }
+
+        setState((previous) => ({
+          ...previous,
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Unable to load telemetry history.',
+        }))
+      }
+    }
+
+    void loadTelemetryHistory()
 
     function handleConnect() {
       setState((previous) => ({
@@ -154,19 +264,24 @@ export function useTelemetry() {
     }
 
     function handleTelemetry(payload: unknown) {
-      const decoded = decodeTelemetry(payload)
+  const decoded = decodeTelemetry(payload)
 
-      if (!decoded) {
-        setState((previous) => ({
-          ...previous,
-          error: 'Received an invalid telemetry payload.',
-        }))
-        return
-      }
+  if (!decoded) {
+    setState((previous) => ({
+      ...previous,
+      error: 'Received an invalid telemetry payload.',
+    }))
+    return
+  }
 
-      pending.push(...(Array.isArray(decoded) ? decoded : [decoded]))
-    }
+  const points = Array.isArray(decoded) ? decoded : [decoded]
 
+  for (const point of points) {
+    updateLatestPosition(point)
+  }
+
+  pending.push(...points)
+}
 function handleGeofenceAlert(payload: unknown) {
   if (
     !payload ||
@@ -201,6 +316,7 @@ function handleGeofenceAlert(payload: unknown) {
 
     return () => {
       clearInterval(flushTimer)
+        historyController.abort()
       flushTelemetry()
 
       socket.off('connect', handleConnect)

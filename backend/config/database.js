@@ -1,4 +1,5 @@
 ﻿
+const dns = require("node:dns");
 const { MongoClient } = require("mongodb");
 
 let client;
@@ -23,32 +24,34 @@ async function connectDatabase() {
     maxConnecting: 5,
     waitQueueTimeoutMS: 5000,
     serverSelectionTimeoutMS: 10000,
+
+    lookup: (hostname, options, callback) =>
+      dns.lookup(hostname, { ...options, family: 4 }, callback),
+
     monitorCommands: process.env.TELEMETRY_TIMING === "true",
   });
 
+  if (process.env.TELEMETRY_TIMING === "true") {
+    client.on("commandSucceeded", (event) => {
+      if (event.commandName === "commitTransaction") {
+        console.log(
+          `[TIMING] MongoDB commitTransaction command: ${event.duration} ms`
+        );
+      }
+    });
 
-if (process.env.TELEMETRY_TIMING === "true") {
-  client.on("commandSucceeded", (event) => {
-    if (event.commandName === "commitTransaction") {
+    client.on("connectionCheckedOut", (event) => {
       console.log(
-        `[TIMING] MongoDB commitTransaction command: ${event.duration} ms`
+        `[TIMING] MongoDB connection checkout: ${event.durationMS} ms`
       );
-    }
-  });
+    });
 
-client.on("connectionCheckedOut", (event) => {
-    console.log(
-      `[TIMING] MongoDB connection checkout: ${event.durationMS} ms`
-    );
-  });
-
-  client.on("connectionCheckOutFailed", (event) => {
-    console.log(
-      `[TIMING] MongoDB connection checkout failed: ${event.reason}, duration: ${event.durationMS} ms`
-    );
-  });
-}
-
+    client.on("connectionCheckOutFailed", (event) => {
+      console.log(
+        `[TIMING] MongoDB connection checkout failed: ${event.reason}, duration: ${event.durationMS} ms`
+      );
+    });
+  }
 
   await client.connect();
   db = client.db("fleetdash");
