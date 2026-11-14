@@ -1,3 +1,4 @@
+
 import { useEffect, useState } from 'react'
 import {
   socket,
@@ -20,6 +21,7 @@ type TelemetryState = {
   alerts: GeofenceAlert[]
   error: string | null
 }
+
 type TelemetryHistoryResponse = {
   success: boolean
   totalVehicles: number
@@ -42,7 +44,6 @@ type TelemetryHistoryResponse = {
     }[]
   }[]
 }
-
 
 function isTelemetryPoint(value: unknown): value is TelemetryPoint {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -147,7 +148,7 @@ export function useTelemetry() {
     }
 
     const flushTimer = setInterval(flushTelemetry, FLUSH_INTERVAL_MS)
-        const historyController = new AbortController()
+    const historyController = new AbortController()
 
     async function loadTelemetryHistory() {
       try {
@@ -182,9 +183,10 @@ export function useTelemetry() {
               eventId: reading.eventId,
             })),
           )
-          for (const point of historicalTelemetry) {
-  updateLatestPosition(point)
-}
+
+        for (const point of historicalTelemetry) {
+          updateLatestPosition(point)
+        }
 
         setState((previous) => {
           const combined = [
@@ -206,10 +208,13 @@ export function useTelemetry() {
           return {
             ...previous,
             telemetry: uniqueTelemetry.slice(-MAX_TELEMETRY_POINTS),
-            alerts: [
-              ...history.geofenceAlerts,
-              ...previous.alerts,
-            ].slice(0, MAX_GEOFENCE_ALERTS),
+            alerts: Array.from(
+              new Map(
+                [...previous.alerts, ...history.geofenceAlerts].map(
+                  (alert) => [alert._id, alert],
+                ),
+              ).values(),
+            ).slice(0, MAX_GEOFENCE_ALERTS),
             error: null,
           }
         })
@@ -264,44 +269,58 @@ export function useTelemetry() {
     }
 
     function handleTelemetry(payload: unknown) {
-  const decoded = decodeTelemetry(payload)
+      const decoded = decodeTelemetry(payload)
 
-  if (!decoded) {
-    setState((previous) => ({
-      ...previous,
-      error: 'Received an invalid telemetry payload.',
-    }))
-    return
-  }
+      if (!decoded) {
+        setState((previous) => ({
+          ...previous,
+          error: 'Received an invalid telemetry payload.',
+        }))
+        return
+      }
 
-  const points = Array.isArray(decoded) ? decoded : [decoded]
+      const points = Array.isArray(decoded) ? decoded : [decoded]
 
-  for (const point of points) {
-    updateLatestPosition(point)
-  }
+      for (const point of points) {
+        updateLatestPosition(point)
+      }
 
-  pending.push(...points)
-}
-function handleGeofenceAlert(payload: unknown) {
-  if (
-    !payload ||
-    typeof payload !== 'object' ||
-    !('vehicleId' in payload) ||
-    !('message' in payload) ||
-    !('type' in payload) ||
-    (payload as Record<string, unknown>).type !== 'GEOFENCE_BREACH'
-  ) {
-    console.warn('Received an invalid geofence alert payload.')
-    return
-  }
+      pending.push(...points)
+    }
 
-  const alert = payload as GeofenceAlert
+    function handleGeofenceAlert(payload: unknown) {
+      if (
+        !payload ||
+        typeof payload !== 'object' ||
+        !('vehicleId' in payload) ||
+        !('message' in payload) ||
+        !('type' in payload) ||
+        (payload as Record<string, unknown>).type !== 'GEOFENCE_BREACH'
+      ) {
+        console.warn('Received an invalid geofence alert payload.')
+        return
+      }
 
-  setState((previous) => ({
-    ...previous,
-    alerts: [alert, ...previous.alerts].slice(0, MAX_GEOFENCE_ALERTS),
-  }))
-}
+      const alert = payload as GeofenceAlert
+
+      setState((previous) => {
+        const alreadyExists = previous.alerts.some(
+          (existing) => existing._id === alert._id,
+        )
+
+        if (alreadyExists) {
+          return previous
+        }
+
+        return {
+          ...previous,
+          alerts: [alert, ...previous.alerts].slice(
+            0,
+            MAX_GEOFENCE_ALERTS,
+          ),
+        }
+      })
+    }
 
     socket.on('connect', handleConnect)
     socket.on('disconnect', handleDisconnect)
@@ -316,7 +335,7 @@ function handleGeofenceAlert(payload: unknown) {
 
     return () => {
       clearInterval(flushTimer)
-        historyController.abort()
+      historyController.abort()
       flushTelemetry()
 
       socket.off('connect', handleConnect)
