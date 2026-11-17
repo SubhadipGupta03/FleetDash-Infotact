@@ -1,35 +1,64 @@
-const { createCluster } = require("redis");
 
-const configuredNodes = process.env.REDIS_NODES
-  ?.split(",")
-  .map((url) => url.trim())
-  .filter(Boolean);
+const { createCluster, createClient } = require("redis");
 
-const rootNodes = (
-  configuredNodes?.length
-    ? configuredNodes
-    : [
-        "redis://127.0.0.1:7001",
-        "redis://127.0.0.1:7002",
-        "redis://127.0.0.1:7003",
-      ]
-).map((url) => ({ url }));
+const redisMode = (process.env.REDIS_MODE || "cluster").toLowerCase();
 
-const publisher = createCluster({ rootNodes });
-const subscriber = createCluster({ rootNodes });
+let publisher;
+let subscriber;
 
-publisher.on("error", (error) => {
-  console.error("Redis Cluster publisher error:", error.message);
-});
+if (redisMode === "upstash") {
+  const redisUrl = process.env.REDIS_URL;
 
-subscriber.on("error", (error) => {
-  console.error("Redis Cluster subscriber error:", error.message);
-});
+  if (!redisUrl) {
+    throw new Error("REDIS_URL is required when REDIS_MODE=upstash");
+  }
+
+  publisher = createClient({ url: redisUrl });
+  subscriber = publisher.duplicate();
+
+  publisher.on("error", (error) => {
+    console.error("Upstash Redis publisher error:", error.message);
+  });
+
+  subscriber.on("error", (error) => {
+    console.error("Upstash Redis subscriber error:", error.message);
+  });
+} else if (redisMode === "cluster") {
+  const configuredNodes = process.env.REDIS_NODES
+    ?.split(",")
+    .map((url) => url.trim())
+    .filter(Boolean);
+
+  const rootNodes = (
+    configuredNodes?.length
+      ? configuredNodes
+      : [
+          "redis://127.0.0.1:7001",
+          "redis://127.0.0.1:7002",
+          "redis://127.0.0.1:7003",
+        ]
+  ).map((url) => ({ url }));
+
+  publisher = createCluster({ rootNodes });
+  subscriber = createCluster({ rootNodes });
+
+  publisher.on("error", (error) => {
+    console.error("Redis Cluster publisher error:", error.message);
+  });
+
+  subscriber.on("error", (error) => {
+    console.error("Redis Cluster subscriber error:", error.message);
+  });
+} else {
+  throw new Error(
+    `Invalid REDIS_MODE: ${redisMode}. Use "cluster" or "upstash".`
+  );
+}
 
 let connectPromise = null;
 
 async function connectRedis() {
-  if (publisher.isOpen && subscriber.isOpen) {
+  if (publisher.isReady && subscriber.isReady) {
     return;
   }
 
@@ -47,9 +76,12 @@ async function connectRedis() {
         await subscriber.connect();
       }
 
-      console.log("Redis Cluster Pub/Sub connections ready");
+      console.log(
+        redisMode === "upstash"
+          ? "Upstash Redis Pub/Sub connections ready"
+          : "Redis Cluster Pub/Sub connections ready"
+      );
     } catch (error) {
-      // Avoid leaving a half-connected pair after startup fails.
       await Promise.all(
         [
           ["publisher", publisher],
