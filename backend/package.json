@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-  "start": "node server.js",
-  "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-redis.ps1 && nodemon server.js"
-},
+    "start": "node server.js",
+    "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-redis.ps1 && nodemon server.js",
+    "test": "jest --runInBand"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -20,6 +21,8 @@
     "socket.io-client": "^4.8.4"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "jest": "^30.5.2",
+    "nodemon": "^3.1.14",
+    "supertest": "^7.3.2"
   }
 }
