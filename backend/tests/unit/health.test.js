@@ -50,7 +50,6 @@ const {
   storeTelemetry,
 } = require("../../config/telemetryBuckets");
 
-const { publisher } = require("../../config/redisClient");
 const { getDatabase } = require("../../config/database");
 
 const {
@@ -59,8 +58,8 @@ const {
 
 describe("FleetDash API tests", () => {
     const mockEvents = {
-    countDocuments: jest.fn(),
-  };
+  estimatedDocumentCount: jest.fn(),
+};
 
   const mockBuckets = {
     aggregate: jest.fn(),
@@ -85,7 +84,7 @@ describe("FleetDash API tests", () => {
 
   getDatabase.mockReturnValue(mockDatabase);
 
-  mockEvents.countDocuments.mockResolvedValue(83);
+  mockEvents.estimatedDocumentCount.mockResolvedValue(83);
 
   mockBuckets.aggregate.mockReturnValue({
     toArray: jest.fn().mockResolvedValue([
@@ -239,36 +238,31 @@ describe("FleetDash API tests", () => {
     });
 
     expect(storeTelemetry).toHaveBeenCalledTimes(1);
-    expect(publisher.publish).not.toHaveBeenCalled();
   });
 
-  test("POST /api/telemetry/ingest should report stored data when Redis publishing fails", async () => {
-    publisher.publish.mockRejectedValueOnce(
-      new Error("Simulated Redis publishing failure")
-    );
-
-    const response = await request(app)
-      .post("/api/telemetry/ingest")
-      .set("Idempotency-Key", "JEST-REDIS-FAIL-001")
-      .send({
-        vehicleId: "TEST-VEHICLE-001",
-        latitude: 28.6139,
-        longitude: 77.209,
-        timestamp: new Date().toISOString(),
-      });
-
-    expect(response.status).toBe(503);
-    expect(response.body).toMatchObject({
-      success: false,
-      stored: true,
-      published: false,
-      eventId: "JEST-REDIS-FAIL-001",
-      error: "Telemetry was stored, but Redis publishing failed",
+  test("POST /api/telemetry/ingest should queue telemetry for background delivery", async () => {
+  const response = await request(app)
+    .post("/api/telemetry/ingest")
+    .set("Idempotency-Key", "JEST-OUTBOX-001")
+    .send({
+      vehicleId: "TEST-VEHICLE-001",
+      latitude: 28.6139,
+      longitude: 77.209,
+      timestamp: new Date().toISOString(),
     });
 
-    expect(storeTelemetry).toHaveBeenCalledTimes(1);
-    expect(publisher.publish).toHaveBeenCalledTimes(1);
+  expect(response.status).toBe(200);
+  expect(response.body).toMatchObject({
+    success: true,
+    message: "Telemetry stored successfully; delivery queued through outbox",
+    duplicate: false,
+    telemetry: {
+      eventId: "JEST-OUTBOX-001",
+    },
   });
+
+  expect(storeTelemetry).toHaveBeenCalledTimes(1);
+});
 
   test("POST /api/telemetry/ingest should reject invalid telemetry from worker", async () => {
     processTelemetry.mockResolvedValueOnce({
@@ -356,10 +350,9 @@ describe("FleetDash API tests", () => {
     expect(response.body.geofenceAlerts).toEqual([]);
 
     expect(storeTelemetry).toHaveBeenCalledTimes(1);
-    expect(publisher.publish).not.toHaveBeenCalled();
   });
 
-  test("POST /api/telemetry/ingest should still publish telemetry when geofence processing fails", async () => {
+  test("POST /api/telemetry/ingest should still queue telemetry when geofence processing fails", async () => {
     processGeofenceAlerts.mockRejectedValueOnce(
       new Error("Simulated geofence processing failure")
     );
@@ -379,6 +372,6 @@ describe("FleetDash API tests", () => {
     expect(response.body.geofenceAlerts).toEqual([]);
 
     expect(processGeofenceAlerts).toHaveBeenCalledTimes(1);
-    expect(publisher.publish).toHaveBeenCalledTimes(1);
+    expect(storeTelemetry).toHaveBeenCalledTimes(1);
   });
 });

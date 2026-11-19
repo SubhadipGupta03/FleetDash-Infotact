@@ -109,6 +109,7 @@ async function storeTelemetry(input) {
 
   const buckets = db.collection("telemetryBuckets");
   const events = db.collection("telemetryEvents");
+  const outbox = db.collection("telemetryOutbox");
 
   const bucketStart = new Date(timestamp);
   bucketStart.setUTCMinutes(0, 0, 0);
@@ -149,6 +150,25 @@ if (timingEnabled) {
         },
         { session }
       );
+
+      await outbox.insertOne(
+  {
+    _id: eventId,
+    eventId,
+    telemetry: {
+      eventId,
+      vehicleId,
+      latitude,
+      longitude,
+      timestamp,
+    },
+    deliveryStatus: "PENDING",
+    attempts: 0,
+    createdAt: new Date(),
+  },
+  { session }
+);
+
 
       logTiming("MongoDB event insert", operationStart);
 

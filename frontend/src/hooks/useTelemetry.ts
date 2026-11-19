@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from 'react'
 import {
   socket,
@@ -6,11 +5,15 @@ import {
   type TelemetryPoint,
   type GeofenceAlert,
 } from '../services/socket'
-import { updateLatestPosition } from '../services/telemetryStore'
+import {
+  updateLatestPosition,
+  notifyLatestPositionsChanged,
+} from '../services/telemetryStore'
 
 const MAX_TELEMETRY_POINTS = 5000
 const FLUSH_INTERVAL_MS = 100
 const MAX_GEOFENCE_ALERTS = 100
+const MAX_PENDING_TELEMETRY = 10000
 const API_BASE_URL =
   import.meta.env.VITE_API_URL || 'http://localhost:5000'
 
@@ -137,6 +140,7 @@ export function useTelemetry() {
 
       const batch = pending
       pending = []
+      notifyLatestPositionsChanged()
 
       setState((previous) => ({
         ...previous,
@@ -146,6 +150,7 @@ export function useTelemetry() {
         error: null,
       }))
     }
+    notifyLatestPositionsChanged()
 
     const flushTimer = setInterval(flushTelemetry, FLUSH_INTERVAL_MS)
     const historyController = new AbortController()
@@ -170,6 +175,19 @@ export function useTelemetry() {
           throw new Error('Failed to load telemetry history.')
         }
 
+        for (const vehicle of history.vehicles) {
+          updateLatestPosition({
+            vehicleId: vehicle.vehicleId,
+            latitude: vehicle.latitude,
+            longitude: vehicle.longitude,
+            timestamp:
+              vehicle.timestamp instanceof Date
+                ? vehicle.timestamp.toISOString()
+                : vehicle.timestamp,
+          })
+        }
+        notifyLatestPositionsChanged()
+
         const historicalTelemetry: TelemetryPoint[] =
           history.recentBuckets.flatMap((bucket) =>
             bucket.readings.map((reading) => ({
@@ -187,6 +205,7 @@ export function useTelemetry() {
         for (const point of historicalTelemetry) {
           updateLatestPosition(point)
         }
+        notifyLatestPositionsChanged()
 
         setState((previous) => {
           const combined = [
@@ -283,9 +302,12 @@ export function useTelemetry() {
 
       for (const point of points) {
         updateLatestPosition(point)
+        pending.push(point)
       }
 
-      pending.push(...points)
+      if (pending.length > MAX_PENDING_TELEMETRY) {
+        pending = pending.slice(-MAX_PENDING_TELEMETRY)
+      }
     }
 
     function handleGeofenceAlert(payload: unknown) {

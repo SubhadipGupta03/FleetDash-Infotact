@@ -27,6 +27,12 @@ const {
   startGeofenceAlertOutbox,
   stopGeofenceAlertOutbox,
 } = require("./services/geofenceAlertOutbox");
+const {
+  ensureTelemetryOutboxIndexes,
+  startTelemetryOutbox,
+  stopTelemetryOutbox,
+} = require("./services/telemetryOutbox");
+
 const PORT = Number.parseInt(process.env.PORT || "5000", 10);
 const TELEMETRY_CHANNEL = "fleetdash:telemetry";
 const GEOFENCE_ALERT_CHANNEL = "fleetdash:geofence-alerts";
@@ -313,6 +319,7 @@ async function closeRedisClient(client, name) {
 
 async function cleanupResources() {
   await stopGeofenceAlertOutbox();
+  await stopTelemetryOutbox();
 
   await new Promise((resolve) => {
     io.close(() => resolve());
@@ -331,11 +338,13 @@ async function startServer() {
     await connectDatabase();
     await ensureTelemetryIndexes();
     await ensureGeofenceAlertOutboxIndexes();
+    await ensureTelemetryOutboxIndexes();
 
     await connectRedis();
 
     await subscribeToTelemetry();
-startGeofenceAlertOutbox();
+    startGeofenceAlertOutbox();
+    startTelemetryOutbox();
 
     await new Promise((resolve, reject) => {
       const onError = (error) => {

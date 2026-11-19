@@ -3,6 +3,7 @@ import './App.css'
 import { useEffect, useMemo, useState } from 'react'
 import { useTelemetry } from './hooks/useTelemetry'
 import type { TelemetryPoint } from './services/socket'
+import { getLatestPositions } from './services/telemetryStore'
 
 const ACTIVE_WINDOW_MS = 60_000
 
@@ -33,48 +34,43 @@ useEffect(() => {
   const { connected, connectionStatus, telemetry, alerts, error } = useTelemetry()
 
   const latestVehicles = useMemo(() => {
-    const latestByVehicle = new Map<string, TelemetryPoint>()
-
-    for (const point of telemetry) {
-      if (!point.vehicleId) continue
-
-      const previous = latestByVehicle.get(point.vehicleId)
-
-      if (
-        !previous ||
-        getTimestamp(point) >= getTimestamp(previous)
-      ) {
-        latestByVehicle.set(point.vehicleId, point)
-      }
-    }
-
-    return Array.from(latestByVehicle.values()).sort((a, b) =>
-      a.vehicleId.localeCompare(b.vehicleId),
-    )
-  }, [telemetry])
-
-  const activeVehicles = latestVehicles.filter((vehicle) => {
-    const timestamp = getTimestamp(vehicle)
-    const age = now - timestamp
-
-    return timestamp > 0 && age >= 0 && age <= ACTIVE_WINDOW_MS
-  })
-
-  const validLocations = latestVehicles.filter(
-    (vehicle) =>
-      Number.isFinite(vehicle.latitude) &&
-      Number.isFinite(vehicle.longitude) &&
-      vehicle.latitude >= -90 &&
-      vehicle.latitude <= 90 &&
-      vehicle.longitude >= -180 &&
-      vehicle.longitude <= 180,
+  return Array.from(getLatestPositions().values()).sort((a, b) =>
+    a.vehicleId.localeCompare(b.vehicleId),
   )
+}, [telemetry])
 
-  const selectedVehicle =
-  validLocations.find(
-    (vehicle) => vehicle.vehicleId === selectedVehicleId,
-  ) ?? null
+ const activeVehicles = useMemo(
+  () =>
+    latestVehicles.filter((vehicle) => {
+      const timestamp = getTimestamp(vehicle)
+      const age = now - timestamp
 
+      return timestamp > 0 && age >= 0 && age <= ACTIVE_WINDOW_MS
+    }),
+  [latestVehicles, now],
+)
+
+const validLocations = useMemo(
+  () =>
+    latestVehicles.filter(
+      (vehicle) =>
+        Number.isFinite(vehicle.latitude) &&
+        Number.isFinite(vehicle.longitude) &&
+        vehicle.latitude >= -90 &&
+        vehicle.latitude <= 90 &&
+        vehicle.longitude >= -180 &&
+        vehicle.longitude <= 180,
+    ),
+  [latestVehicles],
+)
+
+const selectedVehicle = useMemo(
+  () =>
+    validLocations.find(
+      (vehicle) => vehicle.vehicleId === selectedVehicleId,
+    ) ?? null,
+  [validLocations, selectedVehicleId],
+)
 const selectedVehicleTimestamp = selectedVehicle
   ? getTimestamp(selectedVehicle)
   : 0
@@ -84,15 +80,24 @@ const selectedVehicleIsActive =
   now - selectedVehicleTimestamp >= 0 &&
   now - selectedVehicleTimestamp <= ACTIVE_WINDOW_MS
 
-const selectedVehicleUpdateCount = selectedVehicle
-  ? telemetry.filter(
-      (point) => point.vehicleId === selectedVehicle.vehicleId,
-    ).length
-  : 0
-
-  const latestActivity = [...telemetry]
-  .sort((a, b) => getTimestamp(b) - getTimestamp(a))
-  .slice(0, 6)
+const selectedVehicleUpdateCount = useMemo(
+  () =>
+    selectedVehicle
+      ? telemetry.reduce(
+          (count, point) =>
+            count + (point.vehicleId === selectedVehicle.vehicleId ? 1 : 0),
+          0,
+        )
+      : 0,
+  [telemetry, selectedVehicle],
+)
+  const latestActivity = useMemo(
+  () =>
+    [...telemetry]
+      .sort((a, b) => getTimestamp(b) - getTimestamp(a))
+      .slice(0, 6),
+  [telemetry],
+)
 
   return (
     <main className="dashboard">

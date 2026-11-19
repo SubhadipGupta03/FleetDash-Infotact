@@ -1,7 +1,27 @@
-
 import type { TelemetryPoint } from './socket'
 
 const latestPositions = new Map<string, TelemetryPoint>()
+const listeners = new Set<() => void>()
+let frameRequested = false
+
+export function subscribeLatestPositions(listener: () => void) {
+  listeners.add(listener)
+
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+export function notifyLatestPositionsChanged(): void {
+  if (frameRequested) return
+
+  frameRequested = true
+
+  requestAnimationFrame(() => {
+    frameRequested = false
+    listeners.forEach((listener) => listener())
+  })
+}
 
 function getTimestamp(point: TelemetryPoint): number | null {
   const value = point.timestamp

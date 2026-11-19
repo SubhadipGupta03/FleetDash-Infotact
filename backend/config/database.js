@@ -1,4 +1,4 @@
-﻿
+
 const dns = require("node:dns");
 const { MongoClient } = require("mongodb");
 
@@ -33,9 +33,11 @@ async function connectDatabase() {
 
   if (process.env.TELEMETRY_TIMING === "true") {
     client.on("commandSucceeded", (event) => {
-      if (event.commandName === "commitTransaction") {
+      if (
+        ["insert", "update", "commitTransaction"].includes(event.commandName)
+      ) {
         console.log(
-          `[TIMING] MongoDB commitTransaction command: ${event.duration} ms`
+          `[TIMING] MongoDB ${event.commandName} command: ${event.duration} ms`
         );
       }
     });

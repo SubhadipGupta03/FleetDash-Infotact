@@ -23,6 +23,7 @@ export default function () {
   const response = http.post(
     'http://localhost:5000/api/telemetry/ingest',
     JSON.stringify({
+      eventId: `k6-ramp90-${Date.now()}-${__VU}-${__ITER}`,
       vehicleId: 'VH-K6-RAMP90-20261023',
       latitude: 28.6139,
       longitude: 77.2090,

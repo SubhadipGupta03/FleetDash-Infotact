@@ -5,12 +5,11 @@ const { performance } = require("node:perf_hooks");
 const express = require("express");
 const { storeTelemetry } = require("../config/telemetryBuckets");
 const { processTelemetry } = require("../config/telemetryWorkerPool");
-const { publisher } = require("../config/redisClient");
+
 
 const router = express.Router();
 const { getDatabase } = require("../config/database");
 const timingEnabled = process.env.TELEMETRY_TIMING === "true";
-const TELEMETRY_CHANNEL = "fleetdash:telemetry";
 
 router.post("/ingest", async (req, res) => {
   // Validate the idempotency key before consuming worker capacity.
@@ -106,9 +105,8 @@ router.post("/ingest", async (req, res) => {
     });
   }
 
-  // Do not broadcast an event already recorded as a duplicate.
-  // Reliable recovery after a failed publish requires a persistent
-  // delivery/outbox mechanism, which must be implemented with storage.
+  // Duplicate events are not inserted into the outbox again.
+// The original event remains eligible for background delivery.
 
   if (bucket.duplicate) {
     return res.status(200).json({
@@ -121,48 +119,26 @@ router.post("/ingest", async (req, res) => {
     });
   }
 
-// Process geofence entry and exit transitions.
+  // Process geofence entry and exit transitions.
   let geofenceAlerts = [];
+  const geofenceStart = performance.now();
 
   try {
     geofenceAlerts = await processGeofenceAlerts(telemetry);
   } catch (error) {
     console.error("Geofence alert processing error:", error.message);
-  }
-
-  try {
-    const redisStart = performance.now();
-
-    await publisher.publish(
-      TELEMETRY_CHANNEL,
-      JSON.stringify(telemetry)
-    );
-
+  } finally {
     if (timingEnabled) {
       console.log(
-        `[TIMING] Redis publish: ${(
-          performance.now() - redisStart
+        `[TIMING] Geofence processing: ${(
+          performance.now() - geofenceStart
         ).toFixed(2)} ms`
       );
     }
-  } catch (error) {
-    console.error("Redis telemetry publish error:", {
-      message: error.message,
-      code: error.code,
-    });
-
-    return res.status(503).json({
-      success: false,
-      stored: true,
-      published: false,
-      eventId,
-      error: "Telemetry was stored, but Redis publishing failed",
-    });
   }
-
   return res.status(200).json({
     success: true,
-    message: "Telemetry processed and stored successfully",
+    message: "Telemetry stored successfully; delivery queued through outbox",
     duplicate: false,
     telemetry,
     bucket,
@@ -176,76 +152,45 @@ router.get("/history", async (req, res) => {
     const db = getDatabase();
 
     const buckets = db.collection("telemetryBuckets");
-const events = db.collection("telemetryEvents");
-const alerts = db.collection("geofenceAlerts");
+    const events = db.collection("telemetryEvents");
+    const alerts = db.collection("geofenceAlerts");
 
-const DEMO_VEHICLE_IDS = [
-  "VH-K6-DISTRIBUTED-34",
-  "VH-K6-DISTRIBUTED-38",
-  "VH-K6-DISTRIBUTED-7",
-  "VH-K6-DISTRIBUTED-24",
-  "VH-K6-DISTRIBUTED-59",
-];
+    const [
+      totalTelemetryEvents,
+      vehicleSummaries,
+      recentAlerts,
+      recentBuckets,
+    ] = await Promise.all([
+      events.estimatedDocumentCount(),
 
+      // Latest reading per vehicle, taken from each vehicle's newest bucket.
+      buckets
+        .aggregate([
+          { $sort: { bucketStart: -1 } },
+          {
+            $group: {
+              _id: "$vehicleId",
+              latestReading: { $first: { $arrayElemAt: ["$readings", -1] } },
+              telemetryCount: { $sum: "$count" },
+            },
+          },
+          {
+            $project: {
+              _id: 0,
+              vehicleId: "$_id",
+              latitude: "$latestReading.latitude",
+              longitude: "$latestReading.longitude",
+              timestamp: "$latestReading.timestamp",
+              telemetryCount: 1,
+            },
+          },
+        ])
+        .toArray(),
 
-const [
-  totalTelemetryEvents,
-  vehicleSummaries,
-  recentAlerts,
-  recentBuckets,
-] = await Promise.all([
-  events.countDocuments({
-    vehicleId: { $in: DEMO_VEHICLE_IDS },
-  }),
+      alerts.find({}).sort({ timestamp: -1 }).limit(50).toArray(),
 
-  buckets.aggregate([
-    {
-      $match: {
-        vehicleId: { $in: DEMO_VEHICLE_IDS },
-      },
-    },
-    {
-      $unwind: "$readings",
-    },
-    {
-      $sort: {
-        "readings.timestamp": -1,
-      },
-    },
-    {
-      $group: {
-        _id: "$vehicleId",
-        latestReading: { $first: "$readings" },
-        telemetryCount: { $sum: 1 },
-      },
-    },
-    {
-      $project: {
-        _id: 0,
-        vehicleId: "$_id",
-        latitude: "$latestReading.latitude",
-        longitude: "$latestReading.longitude",
-        timestamp: "$latestReading.timestamp",
-        telemetryCount: 1,
-      },
-    },
-  ]).toArray(),
-
-  alerts.find({
-    vehicleId: { $in: DEMO_VEHICLE_IDS },
-  })
-    .sort({ timestamp: -1 })
-    .limit(50)
-    .toArray(),
-
-  buckets.find({
-    vehicleId: { $in: DEMO_VEHICLE_IDS },
-  })
-    .sort({ bucketStart: -1 })
-    .limit(100)
-    .toArray(),
-]);
-
+      buckets.find({}).sort({ bucketStart: -1 }).limit(100).toArray(),
+    ]);
 
     return res.status(200).json({
       success: true,
