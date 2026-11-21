@@ -164,32 +164,100 @@ router.get("/history", async (req, res) => {
       events.estimatedDocumentCount(),
 
       // Latest reading per vehicle, taken from each vehicle's newest bucket.
-      buckets
+            buckets
         .aggregate([
-          { $sort: { bucketStart: -1 } },
-          {
-            $group: {
-              _id: "$vehicleId",
-              latestReading: { $first: { $arrayElemAt: ["$readings", -1] } },
-              telemetryCount: { $sum: "$count" },
-            },
+  {
+    $project: {
+      vehicleId: 1,
+      count: 1,
+      latestReading: {
+        $reduce: {
+          input: "$readings",
+          initialValue: null,
+          in: {
+            $cond: [
+              {
+                $or: [
+                  { $eq: ["$$value", null] },
+                  { $gt: ["$$this.timestamp", "$$value.timestamp"] },
+                ],
+              },
+              "$$this",
+              "$$value",
+            ],
           },
-          {
-            $project: {
-              _id: 0,
-              vehicleId: "$_id",
-              latitude: "$latestReading.latitude",
-              longitude: "$latestReading.longitude",
-              timestamp: "$latestReading.timestamp",
-              telemetryCount: 1,
-            },
-          },
+        },
+      },
+    },
+  },
+  { $sort: { "latestReading.timestamp": -1 } },
+  {
+    $group: {
+      _id: "$vehicleId",
+      latestReading: { $first: "$latestReading" },
+      telemetryCount: { $sum: "$count" },
+    },
+  },
+  {
+    $project: {
+      _id: 0,
+      vehicleId: "$_id",
+      latitude: "$latestReading.latitude",
+      longitude: "$latestReading.longitude",
+      timestamp: "$latestReading.timestamp",
+      telemetryCount: 1,
+    },
+  },
         ])
         .toArray(),
 
       alerts.find({}).sort({ timestamp: -1 }).limit(50).toArray(),
 
-      buckets.find({}).sort({ bucketStart: -1 }).limit(100).toArray(),
+      buckets.aggregate([
+  {
+    $sort: {
+      bucketStart: -1,
+      vehicleId: 1,
+      partition: 1,
+    },
+  },
+  {
+    $group: {
+      _id: {
+        vehicleId: "$vehicleId",
+        bucketStart: "$bucketStart",
+      },
+      vehicleId: { $first: "$vehicleId" },
+      bucketStart: { $first: "$bucketStart" },
+      bucketEnd: { $first: "$bucketEnd" },
+      readings: { $push: "$readings" },
+      count: { $sum: "$count" },
+    },
+  },
+  {
+    $project: {
+      _id: 0,
+      vehicleId: 1,
+      bucketStart: 1,
+      bucketEnd: 1,
+      count: 1,
+      readings: {
+        $sortArray: {
+          input: {
+            $reduce: {
+              input: "$readings",
+              initialValue: [],
+              in: { $concatArrays: ["$$value", "$$this"] },
+            },
+          },
+          sortBy: { timestamp: 1 },
+        },
+      },
+    },
+  },
+  { $sort: { bucketStart: -1 } },
+  { $limit: 100 },
+]).toArray(),
     ]);
 
     return res.status(200).json({

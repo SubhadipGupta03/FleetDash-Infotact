@@ -1,5 +1,7 @@
 
-require("dotenv").config();
+require("dotenv").config({
+  path: require("path").resolve(__dirname, "../../.env"),
+});
 
 const {
   connectDatabase,
@@ -16,6 +18,9 @@ const {
 const {
   processGeofenceAlerts,
 } = require("../../services/geofenceAlertService");
+const {
+  closeGeofenceWorkerPool,
+} = require("../../config/geofenceWorkerPool");
 
 async function runTest() {
   const vehicleId = `GEOFENCE-TEST-${Date.now()}`;
@@ -108,6 +113,8 @@ async function runTest() {
     await db.collection("geofenceAlerts").deleteMany({
       vehicleId,
     });
+
+    await closeGeofenceWorkerPool();
 
     await Promise.all([
       publisher.quit(),

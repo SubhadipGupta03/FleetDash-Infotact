@@ -14,9 +14,10 @@ const {
 async function main() {
   const runId = Date.now();
   const vehicleId = `VH-BUCKET-BOUNDARY-${runId}`;
+    let db;
 
   try {
-    const db = await connectDatabase();
+    db = await connectDatabase();
     const collection = db.collection("telemetryBuckets");
 
     const readings = [
@@ -66,27 +67,59 @@ async function main() {
       });
     }
 
+    const hourlyTotals = new Map();
+
+    for (const bucket of buckets) {
+      const hour = bucket.bucketStart.toISOString();
+      const expectedEnd = new Date(
+        new Date(hour).getTime() + 60 * 60 * 1000
+      ).toISOString();
+
+      const existing = hourlyTotals.get(hour) || {
+        count: 0,
+        readingsLength: 0,
+        validEnd: true,
+      };
+
+      existing.count += bucket.count;
+      existing.readingsLength += bucket.readings.length;
+      existing.validEnd =
+        existing.validEnd &&
+        bucket.bucketEnd.toISOString() === expectedEnd;
+
+      hourlyTotals.set(hour, existing);
+    }
+
+    const firstHour = hourlyTotals.get("2026-10-24T10:00:00.000Z");
+    const secondHour = hourlyTotals.get("2026-10-24T11:00:00.000Z");
+
     const passed =
-      buckets.length === 2 &&
-      buckets[0].bucketStart.toISOString() ===
-        "2026-10-24T10:00:00.000Z" &&
-      buckets[0].bucketEnd.toISOString() ===
-        "2026-10-24T11:00:00.000Z" &&
-      buckets[0].count === 2 &&
-      buckets[0].readings.length === 2 &&
-      buckets[1].bucketStart.toISOString() ===
-        "2026-10-24T11:00:00.000Z" &&
-      buckets[1].bucketEnd.toISOString() ===
-        "2026-10-24T12:00:00.000Z" &&
-      buckets[1].count === 1 &&
-      buckets[1].readings.length === 1;
+      hourlyTotals.size === 2 &&
+      firstHour?.count === 2 &&
+      firstHour?.readingsLength === 2 &&
+      firstHour?.validEnd === true &&
+      secondHour?.count === 1 &&
+      secondHour?.readingsLength === 1 &&
+      secondHour?.validEnd === true;
 
     if (!passed) {
       throw new Error("FAIL: UTC hourly bucket boundary verification");
     }
 
     console.log("PASS: UTC hourly bucket boundaries verified");
-  } finally {
+    } finally {
+    if (db) {
+      await Promise.all([
+        db.collection("telemetryBuckets").deleteMany({ vehicleId }),
+        db.collection("telemetryEvents").deleteMany({ vehicleId }),
+        db.collection("telemetryOutbox").deleteMany({
+          "telemetry.vehicleId": vehicleId,
+        }),
+      ]);
+
+      console.log("PASS: Test records cleaned up");
+    }
+
     await closeDatabase();
   }
 }

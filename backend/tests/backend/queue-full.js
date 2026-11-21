@@ -1,4 +1,6 @@
-require("dotenv").config();
+require("dotenv").config({
+  path: require("node:path").resolve(__dirname, "../../.env"),
+});
 process.env.NODE_ENV = "test";
 process.env.TELEMETRY_WORKERS = "1";
 process.env.TELEMETRY_WORKER_MAX_QUEUE = "1";

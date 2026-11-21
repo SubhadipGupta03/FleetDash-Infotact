@@ -10,6 +10,9 @@ const {
   closeTelemetryWorkerPool,
 } = require("./config/telemetryWorkerPool");
 const {
+  closeGeofenceWorkerPool,
+} = require("./config/geofenceWorkerPool");
+const {
   connectDatabase,
   closeDatabase,
 } = require("./config/database");
@@ -326,6 +329,7 @@ async function cleanupResources() {
   });
 
   await closeTelemetryWorkerPool();
+  await closeGeofenceWorkerPool();
 
   await closeRedisClient(subscriber, "subscriber");
   await closeRedisClient(publisher, "publisher");

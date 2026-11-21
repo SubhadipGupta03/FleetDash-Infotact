@@ -13,18 +13,24 @@ function logTiming(label, start) {
 
 async function ensureTelemetryIndexes() {
   const db = getDatabase();
+  const buckets = db.collection("telemetryBuckets");
 
-  await db.collection("telemetryBuckets").createIndex(
-    { vehicleId: 1, bucketStart: 1 },
+  await buckets.createIndex(
+    { vehicleId: 1, bucketStart: 1, partition: 1 },
     {
       unique: true,
-      name: "vehicle_bucket_unique",
+      name: "vehicle_bucket_partition_unique",
     }
   );
-
-  console.log("Telemetry indexes created successfully");
+try {
+  await buckets.dropIndex("vehicle_bucket_unique");
+} catch (error) {
+  if (error.code !== 27) {
+    throw error;
+  }
 }
-
+  console.log("Telemetry bucket partition index created successfully");
+}
 function validateTelemetry(telemetry) {
   if (!telemetry || typeof telemetry !== "object" || Array.isArray(telemetry)) {
     throw new Error("Telemetry must be an object");
@@ -92,7 +98,17 @@ function isDuplicateEventError(error, eventId) {
     error.keyValue?._id === eventId
   );
 }
+const BUCKET_PARTITIONS = 16;
 
+function getBucketPartition(eventId) {
+  let hash = 0;
+
+  for (let i = 0; i < eventId.length; i += 1) {
+    hash = (hash * 31 + eventId.charCodeAt(i)) >>> 0;
+  }
+
+  return hash % BUCKET_PARTITIONS;
+}
 async function storeTelemetry(input) {
   const telemetry = validateTelemetry(input);
 
@@ -139,19 +155,19 @@ if (timingEnabled) {
     `[TIMING] MongoDB transaction callback attempt: ${transactionCallbackAttempts}`
   );
 }
-      let operationStart = performance.now();
+   let operationStart = performance.now();
 
-      // The unique _id ensures an eventId can only be recorded once.
-      await events.insertOne(
-        {
-          _id: eventId,
-          vehicleId,
-          timestamp,
-        },
-        { session }
-      );
+// Store the event exactly once.
+await events.insertOne(
+  {
+    _id: eventId,
+    vehicleId,
+    timestamp,
+  },
+  { session }
+);
 
-      await outbox.insertOne(
+await outbox.insertOne(
   {
     _id: eventId,
     eventId,
@@ -169,36 +185,39 @@ if (timingEnabled) {
   { session }
 );
 
+logTiming("MongoDB event and outbox inserts", operationStart);
 
-      logTiming("MongoDB event insert", operationStart);
+operationStart = performance.now();
 
-      operationStart = performance.now();
+const partition = getBucketPartition(eventId);
 
-      await buckets.updateOne(
-        {
-          vehicleId,
-          bucketStart,
-        },
-        {
-          $setOnInsert: {
-            vehicleId,
-            bucketStart,
-            bucketEnd,
-          },
-          $push: {
-            readings: reading,
-          },
-          $inc: {
-            count: 1,
-          },
-        },
-        {
-          upsert: true,
-          session,
-        }
-      );
+await buckets.updateOne(
+  {
+    vehicleId,
+    bucketStart,
+    partition,
+  },
+  {
+    $setOnInsert: {
+      vehicleId,
+      bucketStart,
+      bucketEnd,
+      partition,
+    },
+    $push: {
+      readings: reading,
+    },
+    $inc: {
+      count: 1,
+    },
+  },
+  {
+    upsert: true,
+    session,
+  }
+);
 
-      logTiming("MongoDB bucket update", operationStart);
+logTiming("MongoDB bucket update", operationStart);
     });
 
     logTiming("MongoDB transaction total", transactionStart);

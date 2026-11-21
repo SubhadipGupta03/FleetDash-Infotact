@@ -1,10 +1,9 @@
 
 const geofences = require("../config/geofences");
+const { isValidPosition } = require("./geofenceService");
 const {
-  checkGeofence,
-  isValidPosition,
-  hasBoundaryIntersection,
-} = require("./geofenceService");
+  processGeofenceTask,
+} = require("../config/geofenceWorkerPool");
 const { publisher } = require("../config/redisClient");
 const { getDatabase } = require("../config/database");
 const {
@@ -76,10 +75,16 @@ async function processVehicleGeofenceAlerts(telemetry) {
     throw new Error("eventId is required for geofence processing");
   }
 
-  const results = checkGeofence(
-    telemetry.latitude,
-    telemetry.longitude
-  );
+  const geofenceResponse = await processGeofenceTask({
+  operation: "calculate-geofences",
+  currentPosition: {
+    latitude: telemetry.latitude,
+    longitude: telemetry.longitude,
+  },
+  geofences,
+});
+
+const results = geofenceResponse.result;
 
   const db = getDatabase();
   const alerts = [];
@@ -114,14 +119,24 @@ async function processVehicleGeofenceAlerts(telemetry) {
       (item) => item.id === result.geofenceId
     );
 
-    const isBreach =
-      previousState === "INSIDE" &&
-      result.status === "OUTSIDE" &&
-      hasBoundaryIntersection(
-        previousPosition,
-        telemetry,
-        geofence
-      );
+    let isBreach = false;
+
+if (
+  previousState === "INSIDE" &&
+  result.status === "OUTSIDE"
+) {
+  const boundaryResponse = await processGeofenceTask({
+    operation: "check-boundary",
+    previousPosition,
+    currentPosition: {
+      latitude: telemetry.latitude,
+      longitude: telemetry.longitude,
+    },
+    geofence,
+  });
+
+  isBreach = boundaryResponse.result === true;
+}
 
     if (isBreach) {
       const alert = {

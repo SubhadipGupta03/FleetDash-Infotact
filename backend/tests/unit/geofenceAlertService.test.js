@@ -12,6 +12,35 @@ jest.mock("../../config/database", () => ({
 jest.mock("../../services/geofenceAlertOutbox", () => ({
   flushPendingGeofenceAlerts: jest.fn(),
 }));
+jest.mock("../../config/geofenceWorkerPool", () => ({
+  processGeofenceTask: jest.fn(async (data) => {
+    const {
+      checkGeofence,
+      hasBoundaryIntersection,
+    } = require("../../services/geofenceService");
+
+    if (data.operation === "calculate-geofences") {
+      return {
+        result: checkGeofence(
+          data.currentPosition.latitude,
+          data.currentPosition.longitude
+        ),
+      };
+    }
+
+    if (data.operation === "check-boundary") {
+      return {
+        result: hasBoundaryIntersection(
+          data.previousPosition,
+          data.currentPosition,
+          data.geofence
+        ),
+      };
+    }
+
+    throw new Error("Unknown geofence worker operation");
+  }),
+}));
 
 const { publisher } = require("../../config/redisClient");
 const { getDatabase } = require("../../config/database");

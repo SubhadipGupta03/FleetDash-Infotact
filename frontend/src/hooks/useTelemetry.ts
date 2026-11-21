@@ -23,6 +23,7 @@ type TelemetryState = {
   telemetry: TelemetryPoint[]
   alerts: GeofenceAlert[]
   error: string | null
+  historyStatus: 'loading' | 'available' | 'unavailable'
 }
 
 type TelemetryHistoryResponse = {
@@ -125,12 +126,13 @@ function decodeTelemetry(
 
 export function useTelemetry() {
   const [state, setState] = useState<TelemetryState>({
-    connected: socket.connected,
-    connectionStatus: null,
-    telemetry: [],
-    alerts: [],
-    error: null,
-  })
+  connected: socket.connected,
+  connectionStatus: null,
+  telemetry: [],
+  alerts: [],
+  error: null,
+  historyStatus: 'loading',
+})
 
   useEffect(() => {
     let pending: TelemetryPoint[] = []
@@ -235,6 +237,7 @@ export function useTelemetry() {
               ).values(),
             ).slice(0, MAX_GEOFENCE_ALERTS),
             error: null,
+historyStatus: 'available',
           }
         })
       } catch (error) {
@@ -246,12 +249,13 @@ export function useTelemetry() {
         }
 
         setState((previous) => ({
-          ...previous,
-          error:
-            error instanceof Error
-              ? error.message
-              : 'Unable to load telemetry history.',
-        }))
+  ...previous,
+  historyStatus: 'unavailable',
+  error:
+    error instanceof Error
+      ? error.message
+      : 'Unable to load telemetry history.',
+}))
       }
     }
 
